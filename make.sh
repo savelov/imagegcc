@@ -19,7 +19,7 @@ GRX=../grx249/contrib/grx249
 CFLAGS="-g -std=gnu89 -fpermissive -fcommon -Wno-implicit-int -Wno-implicit-function-declaration"
 
 SRC="image.c showmap.c coord.c showdata.c files.c grafs.c archive.c window.c
-     unzip.c ioapi.c vert.c compat.c proj_compat.c"
+     vert.c compat.c proj_compat.c"
 
 # PROJ: use the development package when it is installed, otherwise link the
 # runtime library directly (proj_compat.c declares what it needs).
@@ -34,7 +34,20 @@ else
     fi
 fi
 
-LIBS="$GRX/lib/unix/libgrx20X.a -lz -lpng -lX11 -lm $PROJ_LIBS"
+# minizip: the zip reading used to be a copy of minizip inside this project,
+# it is the system library now.  Same fallback as PROJ.
+if pkg-config --exists minizip 2>/dev/null; then
+    MINIZIP_LIBS=$(pkg-config --libs minizip)
+else
+    MINIZIP_LIBS=$(ls /usr/lib/*/libminizip.so.[0-9]* /usr/lib/libminizip.so.[0-9]* \
+                      /usr/local/lib/libminizip.so.[0-9]* 2>/dev/null | head -n 1)
+    if [ -z "$MINIZIP_LIBS" ]; then
+        echo "make.sh: no minizip library found - install libminizip-dev or libminizip1" >&2
+        exit 1
+    fi
+fi
+
+LIBS="$GRX/lib/unix/libgrx20X.a -lz -lpng -lX11 -lm $PROJ_LIBS $MINIZIP_LIBS"
 
 rm -f gen-bitmap imagegcc
 

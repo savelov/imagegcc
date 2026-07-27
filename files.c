@@ -5,7 +5,7 @@
 #include <ctype.h>
 #include <math.h>
 
-#include "unzip.h"
+#include "minizip_compat.h"
 #include "image.h"
 
 #ifdef __TURBOC__
