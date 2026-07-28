@@ -182,7 +182,9 @@ while (1) {
 } /* while 1 */
 fclose(pat);
 
-memset(str,' ',16*80);
+/* zero, not spaces: the rows are printed with %s and the ones this loop
+   does not fill would have no terminator at all */
+memset(str,0,sizeof str);
 sprintf(nam,"%s/porog.q",grfdir);
 sprintf(na,"%s/thresh.q",grfdir);
 if ((pat=fopen (nam,"rt"))==NULL) {
@@ -215,7 +217,7 @@ for (i=0; i<=12; i++)
    fclose(out);
    fclose (pat);
 
-  memset(str,' ',16*80);
+  memset(str,0,sizeof str);
   sprintf(nam,"%s/porog.z",grfdir);
   sprintf(na,"%s/thresh.z",grfdir);
   if ((pat=fopen (nam,"rt"))==NULL) {
@@ -248,7 +250,7 @@ for (i=0; i<=12; i++)
    fclose(out);
    fclose(pat);
 
-  memset(str,' ',16*80);
+  memset(str,0,sizeof str);
   sprintf(nam,"%s/porog.h",grfdir);
   sprintf(na,"%s/thresh.h",grfdir);
   if ((pat=fopen (nam,"rt"))==NULL) {
@@ -515,7 +517,7 @@ sprintf(na,"%s/thresh.p",grfdir);
 
 pat=fopen(nam,"rt");
 // out=fopen (na,"wt");
-memset(str,' ',16*80);
+memset(str,0,sizeof str);
  fgets(s1,79,pat);
  sprintf(str[0],"%s",s1);
  fgets(s3,79,pat);

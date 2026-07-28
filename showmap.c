@@ -5,13 +5,16 @@
 #include <stdlib.h>
 #include <math.h>
 #include "image.h"
+#ifdef QTGUI
+#include "qt_bridge.h"
+#endif
 
 int WINDOW_XSIZE=1800;
 int WINDOW_YSIZE=750;
 
 int WINDOW_LEFT=100;
 
-#ifdef GUI
+#if defined(GUI) || defined(QTGUI)
 int WINDOW_UP=13;
 #else
 int WINDOW_UP=0;
@@ -198,7 +201,22 @@ GrContext * context;
 
 
    logfile=stdout;
-#ifdef GUI
+#if defined(QTGUI)
+   /* Qt owns the window: render through the GRX memory driver, in the same
+    * mode the X11 build uses, and let the Qt widget show that surface. */
+   svga=2;
+   if (!GrSetDriver("memory")) {
+      fprintf(logfile,"Can't select the GRX memory driver\n");
+      exit(1);
+   }
+   if (!GrSetMode(GR_width_height_color_graphics,
+                  QT_SCREEN_XSIZE,QT_SCREEN_YSIZE,256*256*256L)) {
+      fprintf(logfile,"Can't set a %dx%d truecolor memory mode\n",
+              QT_SCREEN_XSIZE,QT_SCREEN_YSIZE);
+      exit(1);
+   }
+   qt_set_screen_context(GrScreenContext());
+#elif defined(GUI)
    GrMouseDetect();
    svga=2;
    GrSetMode(GR_width_height_color_graphics,1920,1080,256*256*256L); 
@@ -240,7 +258,7 @@ GrContext * context;
    TextStyle1.txo_direct    = GR_TEXT_RIGHT;
    TextStyle1.txo_fgcolor.v = colors[15];
    TextStyle1.txo_bgcolor.v = GrOR;
-#ifdef GUI
+#if defined(GUI) || defined(QTGUI)
    RamContext=GrCreateFrameContext(GR_frameRAM24,WINDOW_XSIZE,WINDOW_YSIZE,NULL,NULL);
    SubContext=GrCreateSubContext(WINDOW_LEFT,WINDOW_UP,
      WINDOW_LEFT+WINDOW_XSIZE,WINDOW_UP+WINDOW_YSIZE,NULL,NULL);
@@ -301,6 +319,12 @@ GrSetContext(RamContext);
 
 //GrClearContext(colors[15]);
 
+/* MRES is 0 when the current product is missing from this file - animate()
+ * loads a single product, and not every file carries all of them.  linear()
+ * and show_vectors() divide by it, which turns every coordinate into
+ * INT_MIN and takes GRX down, so keep the previous frame instead. */
+if (MRES>0) {
+
 x_begin=mapsize/2-WINDOW_XSIZE/2/MPIX+x_left;
 x_size=WINDOW_XSIZE/MPIX+2;
 y_begin=mapsize/2-WINDOW_YSIZE/2/MPIX+y_up;
@@ -318,8 +342,12 @@ for (i=0;i<y_size;i++)
 draw_tlo(grafs,max_grafs);
 if (vectors) show_vectors();
 
+}   /* MRES>0 */
 
-#ifdef GUI
+
+#if defined(QTGUI)
+qt_compose_map();   // put the map on the screen surface Qt shows
+#elif defined(GUI)
 // copy RAM to screen
 
 GrSaveContextToPng(RamContext,"/tmp/output.png"); 
@@ -335,7 +363,10 @@ GrSetContext(&ScreenContext);
 GrBox(WINDOW_LEFT-1,WINDOW_UP-1,WINDOW_LEFT+WINDOW_XSIZE,WINDOW_UP+WINDOW_YSIZE,GrAllocColor(255,255,255));
 
 show_header();
-#ifdef GUI
+#if defined(QTGUI)
+/* lets animate() repaint and stay interruptible: space stops it */
+return qt_poll_key();
+#elif defined(GUI)
 return message_poll();
 #else
 return 0;

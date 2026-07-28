@@ -329,7 +329,11 @@ int max_down=MSIZE/2-WINDOW_YSIZE/MPIX/2-1;
 }
 
 
+#ifdef QTGUI
+int image_init(int argc,char *argv[]) {
+#else
 void main(int argc,char *argv[]) {
+#endif
 char temp[80];
 int port_only=0;
 char *wrk_path="paths";
@@ -403,8 +407,9 @@ if (time) {
 
 
 do {
-#ifdef GUI
- read_files(cur_file,0);
+#if defined(GUI) || defined(QTGUI)
+ read_files(cur_file,0);   /* interactive: load every product so the
+                              product buttons can switch without a reload */
 #else
  read_files(cur_file,1);   // 1-only current file
 #endif
@@ -439,7 +444,9 @@ if (server) {
  draw_map(movie>0?0:1);
 
 
-#ifdef GUI
+#if defined(QTGUI)
+ /* Qt drives the event loop from here on */
+#elif defined(GUI)
  GrSetWindowTitle("IMAGE");
  message_loop();
 #else
@@ -475,8 +482,12 @@ if (movie>0) {
 
 } while (movie>0);
 
+#ifdef QTGUI
+ return 0;
+#else
  close_graph();
  free(grafs);
  de_init_files();
+#endif
 
  }

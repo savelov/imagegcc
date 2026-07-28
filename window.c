@@ -2,6 +2,9 @@
 #include <string.h>
 #include <grx20.h>
 #include "image.h"
+#ifdef QTGUI
+#include "qt_bridge.h"
+#endif
 
 extern long colors[NUM_COLORS];
 
@@ -84,8 +87,13 @@ void HideCursor(win_save *SavePtr) {
 }
 
 int GetWindowKey(void) {
+#ifdef QTGUI
+   /* no GRX input device with the memory driver: Qt hands us the key */
+   return qt_wait_key();
+#else
 GrMouseEvent event;
    do GrMouseGetEventT(GR_M_KEYPRESS | GR_M_NOPAINT,&event,1000);
    while (!(event.flags&GR_M_KEYPRESS));
    return event.key;
+#endif
 }

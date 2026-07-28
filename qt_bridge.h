@@ -1,0 +1,68 @@
+/* Bridge between the Qt front end (C++) and the drawing core (C).
+ *
+ * The core still renders with GRX, but into a memory context instead of an
+ * X11 screen; the Qt canvas just shows that surface.  Nothing here pulls in
+ * grx20.h or image.h, so the C++ side does not have to deal with either.
+ */
+
+#ifndef QT_BRIDGE_H
+#define QT_BRIDGE_H
+
+/* Size of the virtual screen the core draws into - the same geometry the
+ * X11 full screen mode used to have. */
+#ifndef QT_SCREEN_XSIZE
+#define QT_SCREEN_XSIZE 1920
+#endif
+#ifndef QT_SCREEN_YSIZE
+#define QT_SCREEN_YSIZE 1080
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* called by init_graph() once the memory context exists */
+void qt_set_screen_context(void *ctx);
+
+/* The panels (legend, readouts, frame) are drawn on the screen surface and
+ * the map itself into a separate buffer; the canvas draws the map over the
+ * screen at qt_map_origin_*.  Both are 24 bits per pixel and the stride may
+ * exceed width*3. */
+unsigned char *qt_screen_pixels(void);
+int qt_screen_width(void);
+int qt_screen_height(void);
+int qt_screen_stride(void);
+
+unsigned char *qt_map_pixels(void);
+int qt_map_width(void);
+int qt_map_height(void);
+int qt_map_stride(void);
+int qt_map_origin_x(void);
+int qt_map_origin_y(void);
+
+/* Copy the map into the screen surface.  draw_map() calls this so that
+ * whatever the core draws afterwards - the archive window, above all -
+ * lands on top of the map instead of behind it. */
+void qt_compose_map(void);
+
+/* Blocking key read for the archive browser, served by the Qt event loop.
+ * Implemented in qtmain.cpp; returns the same codes GetWindowKey() did. */
+int qt_wait_key(void);
+
+/* Non blocking counterpart, called by draw_map() between animation frames:
+ * repaints and returns a pending key, or 0.  animate() stops on space. */
+int qt_poll_key(void);
+
+/* entry points of the existing program */
+int  image_init(int argc, char *argv[]);   /* was main() */
+int  key_pressed(int key);                 /* 1 means quit */
+void mouse_move(int x, int y);
+int  mouse_click_left(int x, int y);
+void timer(void);
+void close_graph(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* QT_BRIDGE_H */

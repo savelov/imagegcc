@@ -57,4 +57,23 @@ gcc $CFLAGS      -o gen-bitmap -I $GRX/include/ $SRC $LIBS
 echo "building imagegcc ..."
 gcc $CFLAGS -DGUI -o imagegcc  -I $GRX/include/ $SRC $LIBS
 
+# imageqt: same drawing code, but rendered into memory and shown by Qt.
+# Skipped when Qt5 is not installed, so the other two targets still build.
+if pkg-config --exists Qt5Widgets 2>/dev/null; then
+    echo "building imageqt ..."
+    rm -f imageqt qtmain.moc
+    OBJDIR=.qtobj
+    mkdir -p $OBJDIR
+
+    for src in $SRC qt_bridge.c; do
+        gcc $CFLAGS -DQTGUI -I $GRX/include/ -c $src -o $OBJDIR/${src%.c}.o
+    done
+
+    moc qtmain.cpp -o qtmain.moc
+    g++ -g -fPIC $(pkg-config --cflags Qt5Widgets) -c qtmain.cpp -o $OBJDIR/qtmain.o
+    g++ -o imageqt $OBJDIR/*.o $LIBS $(pkg-config --libs Qt5Widgets)
+else
+    echo "skipping imageqt: Qt5Widgets not found (install qtbase5-dev)" >&2
+fi
+
 echo "done"
