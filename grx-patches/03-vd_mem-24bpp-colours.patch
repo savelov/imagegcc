@@ -1,0 +1,11 @@
+--- a/src/vdrivers/vd_mem.c
++++ b/src/vdrivers/vd_mem.c
+@@ -109,7 +109,7 @@
+     NULL,                               /* frame driver override */
+     NULL,                               /* frame buffer address */
+     { 8, 8, 8 },                        /* color precisions */
+-    { 0, 0, 0 },                        /* color component bit positions */
++    { 16, 8, 0 },                       /* color component bit positions */
+     GR_VMODEF_MEMORY,                   /* mode flag bits */
+     mem_setmode,                        /* mode set */
+     NULL,                               /* virtual size set */

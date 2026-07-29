@@ -1,0 +1,77 @@
+--- a/makedefs.grx
++++ b/makedefs.grx
+@@ -15,11 +15,11 @@
+ HAVE_LIBJPEG=n
+ 
+ # Specify if you have libpng.a and corresponding .h files.
+-HAVE_LIBPNG=n
++HAVE_LIBPNG=y
+ 
+ # Specify if one of the above libs requires the
+ # zlib compression library
+-NEED_ZLIB=n
++NEED_ZLIB=y
+ 
+ # Specify if you want to include printing code from addons
+ INCLUDE_PRINTING_CODE=y
+@@ -31,7 +31,7 @@
+ INCLUDE_GPC_SUPPORT=n
+ 
+ # Specify if you want shared library support (Linux console and X11)
+-INCLUDE_SHARED_SUPPORT=y
++INCLUDE_SHARED_SUPPORT=n
+ 
+ # Specify if you want to include BGI support
+ INCLUDE_BGI_SUPPORT=y
+@@ -41,10 +41,10 @@
+ CROSS_PLATFORM=
+ 
+ # Specify if you want to use Unix tools on DOS-like platforms
+-HAVE_UNIX_TOOLS=n
++HAVE_UNIX_TOOLS=y
+ 
+ # Specify in linux if you want to build the library for x86_64
+-BUILD_X86_64=n
++BUILD_X86_64=y
+ 
+ # For SDL driver the executable prefix EP is used to discriminate 
+ # between linux X11 and mingw32. Set
+@@ -69,11 +69,16 @@
+ WIN32_GCC_i386_STATIC = $(SYSTEM_TAG_PREFIX).006
+ ANY_GCC_SDL_STATIC    = $(SYSTEM_TAG_PREFIX).008
+ 
++# GRX predates C99; gcc >= 14 turns implicit declarations, implicit int and
++# incompatible pointer/int conversions into hard errors. -std=gnu89 keeps the
++# old dialect and -fpermissive downgrades those errors back to warnings.
++LEGACY_C = -std=gnu89 -fpermissive
++
+ ifdef   DEBUG
+-CCOPT = -O2 -fno-strict-aliasing -Wall -g -DDEBUG=$(DEBUG)
++CCOPT = -O2 -fno-strict-aliasing $(LEGACY_C) -Wall -g -DDEBUG=$(DEBUG)
+ LDOPT = -g
+ else
+-CCOPT = -O2 -fno-strict-aliasing -Wall
++CCOPT = -O2 -fno-strict-aliasing $(LEGACY_C) -Wall
+ LDOPT = -s
+ endif
+ 
+@@ -171,15 +176,16 @@
+ ifdef GRXVX11
+ 
+ # The X11 base dir on your system
+-X11BASE=/usr/X11R6
++X11BASE=/usr
+ 
+ # Add directories with X11 include files here
+ X11INCS=-I$(X11BASE)/include
+ 
+ # put X11 required libraries and directories here
+ # note: some systems need -lsocket added
+-X11LIB=$(X11BASE)/lib
+-X11LIBS=-L$(X11LIB) -lX11
++# modern distributions keep libX11 in a multiarch dir already on the default
++# search path, so no -L is needed
++X11LIBS=-lX11
+ 
+ # Set to try to use the XFree86 Direct Graphics Access driver (DGA2)
+ # (if DGA2 is not available, fall back to the windowed X11 driver)

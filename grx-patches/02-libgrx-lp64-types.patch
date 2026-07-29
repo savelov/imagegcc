@@ -1,0 +1,17 @@
+--- a/src/include/libgrx.h
++++ b/src/include/libgrx.h
+@@ -113,7 +113,13 @@
+ /* char should always be 8bit and short 16bit ... */
+ #define GR_int8  char
+ #define GR_int16 short
+-#if defined(__alpha__) || (defined(_MIPS_SZLONG) && _MIPS_SZLONG == 64)	|| defined(__x86_64__)
++/* Any LP64 target: long is 64 bit there, so GR_int32 must be int and
++ * GR_PtrInt must be long.  The original list named only the 64 bit
++ * platforms that existed then - on a target missing from it (aarch64, for
++ * one) GR_int32 became 64 bit, the fill routines wrote twice the intended
++ * width, and filled areas came out striped. */
++#if defined(__alpha__) || (defined(_MIPS_SZLONG) && _MIPS_SZLONG == 64)	|| defined(__x86_64__) \
++ || defined(__aarch64__) || (defined(__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8)
+ #define GR_int32 int
+ #define GR_int64 long
+ #define GR_PtrInt long

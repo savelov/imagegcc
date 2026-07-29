@@ -1,16 +1,35 @@
 #!/bin/sh
-# Build the X11 (GRX) version of the image tools.
+# Build the image tools against GRX.
 #
 # Requires the GRX library to be built first:
-#   cd ../grx249/contrib/grx249 && make -f makefile.x11 libs
+#   unix:     cd $GRX && make -f makefile.x11 libs      (X11 driver)
+#   windows:  cd $GRX/src && make -f makefile.w32 libs  (native GDI driver)
 #
 # Targets:
 #   gen-bitmap  - batch bitmap generator (no window)
-#   imagegcc    - interactive X11 viewer (-DGUI)
+#   imagegcc    - interactive viewer (-DGUI), X11 or a native window
+#   imageqt     - Qt front end, built when Qt5 is present
 
 set -e
 
-GRX=../grx249/contrib/grx249
+GRX=${GRX:-../grx249/contrib/grx249}
+
+# GRX is built per platform and its window system differs with it.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        GRX_LIB="$GRX/lib/win32/libgrx20.a"
+        WINDOW_LIBS="-lgdi32 -luser32"
+        ;;
+    *)
+        GRX_LIB="$GRX/lib/unix/libgrx20X.a"
+        WINDOW_LIBS="-lX11"
+        ;;
+esac
+
+if [ ! -f "$GRX_LIB" ]; then
+    echo "make.sh: $GRX_LIB not found - build GRX first (see the header above)" >&2
+    exit 1
+fi
 
 # GCC 14+ rejects K&R style code by default; keep the old dialect and
 # downgrade the new hard errors to warnings.  -fcommon (the default before
@@ -29,8 +48,7 @@ else
     PROJ_LIBS=$(ls /usr/lib/*/libproj.so.[0-9]* /usr/lib/libproj.so.[0-9]* \
                    /usr/local/lib/libproj.so.[0-9]* 2>/dev/null | head -n 1)
     if [ -z "$PROJ_LIBS" ]; then
-        echo "make.sh: no PROJ library found - install libproj-dev or libproj25" >&2
-        exit 1
+        PROJ_LIBS=-lproj                      # let the linker look
     fi
 fi
 
@@ -42,14 +60,13 @@ else
     MINIZIP_LIBS=$(ls /usr/lib/*/libminizip.so.[0-9]* /usr/lib/libminizip.so.[0-9]* \
                       /usr/local/lib/libminizip.so.[0-9]* 2>/dev/null | head -n 1)
     if [ -z "$MINIZIP_LIBS" ]; then
-        echo "make.sh: no minizip library found - install libminizip-dev or libminizip1" >&2
-        exit 1
+        MINIZIP_LIBS=-lminizip
     fi
 fi
 
-LIBS="$GRX/lib/unix/libgrx20X.a -lz -lpng -lX11 -lm $PROJ_LIBS $MINIZIP_LIBS"
+LIBS="$GRX_LIB -lz -lpng $WINDOW_LIBS -lm $PROJ_LIBS $MINIZIP_LIBS"
 
-rm -f gen-bitmap imagegcc
+rm -f gen-bitmap imagegcc gen-bitmap.exe imagegcc.exe
 
 echo "building gen-bitmap ..."
 gcc $CFLAGS      -o gen-bitmap -I $GRX/include/ $SRC $LIBS
@@ -61,7 +78,7 @@ gcc $CFLAGS -DGUI -o imagegcc  -I $GRX/include/ $SRC $LIBS
 # Skipped when Qt5 is not installed, so the other two targets still build.
 if pkg-config --exists Qt5Widgets 2>/dev/null; then
     echo "building imageqt ..."
-    rm -f imageqt qtmain.moc
+    rm -f imageqt imageqt.exe qtmain.moc
     OBJDIR=.qtobj
     mkdir -p $OBJDIR
 

@@ -1,0 +1,20 @@
+# build products
+gen-bitmap
+imagegcc
+imageqt
+*.exe
+*.o
+.qtobj/
+qtmain.moc
+dist/
+
+# GRX, when vendored or fetched by the Windows workflow
+grx-build/
+
+# what the program writes while it runs
+output.png
+table.png
+datetime.txt
+locators.js.cp866
+# config/thresh.* are generated at startup but tracked on purpose - they are
+# deterministic now, so they no longer churn on every run

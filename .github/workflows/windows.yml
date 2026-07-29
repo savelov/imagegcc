@@ -1,0 +1,101 @@
+name: windows
+
+# Builds the tools for Windows with MinGW-w64 under MSYS2.  GRX is compiled
+# from source first, with the patches in grx-patches/ applied - see the
+# "GRX 2.4.9 patches" section of README.md for what they are and why.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mingw64:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 / MinGW-w64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            patch
+            tar
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-libpng
+            mingw-w64-x86_64-proj
+            mingw-w64-x86_64-minizip
+            mingw-w64-x86_64-qt5-base
+
+      # GRX 2.4.9 comes from upstream.  Only http is served, so the download
+      # is checked against a known digest; set the GRX_URL repository variable
+      # (and GRX_SHA256) to point somewhere else, or commit the tree as
+      # third_party/grx249 to skip the download altogether.
+      - name: Provide the GRX sources
+        env:
+          GRX_URL: ${{ vars.GRX_URL || 'http://grx.gnu.de/download/grx249.tar.gz' }}
+          GRX_SHA256: ${{ vars.GRX_SHA256 || 'a899956b3ee46492696114d220431405320c64c1f6f058fdfc2b4d6a2beae786' }}
+        run: |
+          set -e
+          if [ -d third_party/grx249 ]; then
+            echo "using the vendored copy in third_party/grx249"
+            cp -r third_party/grx249 grx-build
+          else
+            echo "downloading GRX from $GRX_URL"
+            curl -fL "$GRX_URL" -o grx-src.tar.gz
+            if [ -n "$GRX_SHA256" ]; then
+              echo "$GRX_SHA256  grx-src.tar.gz" | sha256sum -c -
+            fi
+            mkdir grx-build
+            tar xzf grx-src.tar.gz -C grx-build --strip-components=1
+          fi
+          test -f grx-build/makedefs.grx
+
+      - name: Apply the GRX patches
+        run: |
+          set -e
+          for p in grx-patches/*.patch; do
+            echo "applying $p"
+            # -N: a hunk already satisfied by the tree is not an error
+            patch -N -p1 -d grx-build < "$p"
+          done
+
+      - name: Build GRX (native Win32 GDI driver)
+        run: make -C grx-build -f makefile.w32 libs
+
+      - name: Build the tools
+        run: GRX=grx-build ./make.sh
+
+      - name: Collect a runnable bundle
+        run: |
+          set -e
+          mkdir -p dist
+          cp *.exe dist/ 2>/dev/null || true
+          cp -r config paths dist/ 2>/dev/null || true
+          # the binaries need the MinGW and Qt runtime DLLs beside them
+          for exe in dist/*.exe; do
+            ldd "$exe" 2>/dev/null | awk '/\/mingw64\/bin\// {print $3}'
+          done | sort -u | while read -r dll; do
+            [ -f "$dll" ] && cp -n "$dll" dist/ || true
+          done
+          # Qt looks for its platform plugin in platforms/ next to the exe
+          if [ -f dist/imageqt.exe ] && [ -d /mingw64/share/qt5/plugins/platforms ]; then
+            mkdir -p dist/platforms
+            cp /mingw64/share/qt5/plugins/platforms/qwindows.dll dist/platforms/ || true
+          fi
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imagegcc-windows-x86_64
+          path: dist
+          if-no-files-found: error

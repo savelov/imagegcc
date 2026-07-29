@@ -5,13 +5,27 @@
 #include "image.h"
 
 #include <stdio.h>
-#include <unistd.h>
-#include <termios.h>
 
 /* conio.h getch(): read one key without waiting for Enter and without echo.
  * Used on the error paths to hold the message on screen before exit.  When
  * stdin is not a terminal it degrades to a plain read, so the batch build
  * does not stall. */
+
+#ifdef _WIN32
+
+/* the original call is still there on Windows, under its new name */
+#include <conio.h>
+
+int getch(void)
+{
+    return _getch();
+}
+
+#else
+
+#include <unistd.h>
+#include <termios.h>
+
 int getch(void)
 {
     struct termios saved, raw;
@@ -31,3 +45,5 @@ int getch(void)
     tcsetattr(STDIN_FILENO, TCSANOW, &saved);
     return c;
 }
+
+#endif /* _WIN32 */
