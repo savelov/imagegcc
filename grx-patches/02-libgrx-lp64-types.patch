@@ -1,6 +1,6 @@
 --- a/src/include/libgrx.h
 +++ b/src/include/libgrx.h
-@@ -113,7 +113,13 @@
+@@ -113,10 +113,26 @@
  /* char should always be 8bit and short 16bit ... */
  #define GR_int8  char
  #define GR_int16 short
@@ -10,8 +10,21 @@
 + * platforms that existed then - on a target missing from it (aarch64, for
 + * one) GR_int32 became 64 bit, the fill routines wrote twice the intended
 + * width, and filled areas came out striped. */
-+#if defined(__alpha__) || (defined(_MIPS_SZLONG) && _MIPS_SZLONG == 64)	|| defined(__x86_64__) \
-+ || defined(__aarch64__) || (defined(__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8)
++/* Key these off the actual type sizes, not the architecture name.  Naming
++ * __x86_64__ here was wrong for mingw, which defines it while long is only
++ * 32 bit (LLP64): GR_int64 became a 32 bit type, memfill.h still saw it as
++ * defined, and its fills then counted 8 byte units while writing 4. */
++#if defined(__alpha__) || (defined(_MIPS_SZLONG) && _MIPS_SZLONG == 64) \
++ || (defined(__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8)
++/* LP64: long is 64 bit */
  #define GR_int32 int
  #define GR_int64 long
  #define GR_PtrInt long
++#elif defined(_WIN64) || (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8)
++/* LLP64: long is 32 bit, pointers are 64 */
++#define GR_int32 int
++#define GR_int64 long long
++#define GR_PtrInt long long
+ #else
+ #define GR_int32 long
+ #define GR_PtrInt int
