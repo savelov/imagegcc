@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <time.h>
 #include "image.h"
+#ifdef QTGUI
+#include "qt_bridge.h"
+#endif
 
 #ifdef __GNUC__
 #ifdef __MSDOS__
@@ -111,7 +114,7 @@ float i;
 //  outtextxy(LBT+3,UBT+HDT+3+11*14,string);
    it = get_map_data(MAP_S,xcoord,ycoord);
 	 k1=0;
-	 sprintf(s,"                     ");
+	 sprintf(s,"              ");   /* clears the previous S= line */
    if (it!=254) {
 /*   if(flagh==0)
        {*/
@@ -224,6 +227,17 @@ if(it!=254)	sprintf(string,"0=%2d dbz ",(it+1)/3);
       }
 
 } */
+
+#ifdef QTGUI
+/* Likewise for the cursor readout column down the right hand side. */
+void qt_readout_rect(int *x,int *y,int *w,int *h)
+{
+   *x = WINDOW_LEFT + WINDOW_XSIZE;
+   *y = UPPER - 14;                          /* first line is UPPER+2*14 */
+   *w = 15*8;                                /* widest line is ~12 chars */
+   *h = 23*14;                               /* last one is UPPER+20*14 */
+}
+#endif /* QTGUI */
 
 void showtime(void) {
 time_t timer;

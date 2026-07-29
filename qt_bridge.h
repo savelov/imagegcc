@@ -45,6 +45,14 @@ int qt_map_origin_y(void);
  * lands on top of the map instead of behind it. */
 void qt_compose_map(void);
 
+int  qt_screen_bpp(void);
+int  qt_map_bpp(void);
+void qt_dump_surfaces(void);
+
+/* where the fixed panes live on the surface (defined in showmap.c/showdata.c) */
+void qt_legend_rect(int *x,int *y,int *w,int *h);
+void qt_readout_rect(int *x,int *y,int *w,int *h);
+
 /* Blocking key read for the archive browser, served by the Qt event loop.
  * Implemented in qtmain.cpp; returns the same codes GetWindowKey() did. */
 int qt_wait_key(void);

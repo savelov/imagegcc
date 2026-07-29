@@ -168,6 +168,19 @@ y=UBP+16*(YP+YS_V_H);
 
 }        /* end color level */
 
+#ifdef QTGUI
+/* The Qt front end shows the palette strip in a pane of its own, so that
+ * it stays put while the map scrolls.  Report where it lives on the
+ * surface; the constants above are the authority. */
+void qt_legend_rect(int *x,int *y,int *w,int *h)
+{
+   *x = LBP;
+   *y = 0;                                   /* clock and date sit above */
+   *w = WINDOW_LEFT;                         /* everything left of the map */
+   *h = UBP + 16*(YP+YS_V_H) + YP;           /* down to the last swatch */
+}
+#endif /* QTGUI */
+
 void draw_line(int x_start,int y_coord,unsigned char *buf,int count) {
 int i;
 long color;

@@ -3,7 +3,11 @@ requires GRX2.4.9 http://grx.gnu.de/download/index.html
 bufr2wrk.py - script to process BUFR files
 requires archive with zip files portN/YYMMDDHH.MMm
 
-requires belo patch in grx library
+requires below patch in grx library
+
+makedefs.grx — build config (64-bit, libpng, X11 path, -std=gnu89 -fpermissive)
+src/include/libgrx.h — LP64 types; required on aarch64, no-op on x86_64
+src/vdrivers/vd_mem.c — 24-bpp colour bit positions; only imageqt needs it
 
 --- vd_mem.c.orig-backup	2026-07-28 08:12:58.138735696 +0200
 +++ vd_mem.c	2026-07-28 08:12:58.160524509 +0200

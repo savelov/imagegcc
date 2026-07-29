@@ -26,9 +26,9 @@
 #include <QShortcut>
 #include <QEventLoop>
 #include <QCloseEvent>
+#include <QScrollBar>
 
 #include <clocale>
-#include <stdio.h>
 
 #include "qt_bridge.h"
 
@@ -48,6 +48,42 @@ enum {
 };
 
 /* ------------------------------------------------------------------ */
+/* a fixed pane onto one region of the surface                         */
+/* ------------------------------------------------------------------ */
+
+/* The palette and the cursor readout are drawn by the C code into the
+ * margins of the same surface as the map.  Showing those regions in panes
+ * of their own keeps them on screen while the map scrolls underneath. */
+class SurfaceStrip : public QWidget
+{
+public:
+    SurfaceStrip(const QImage *surface, QWidget *parent = nullptr)
+        : QWidget(parent), image(surface) {}
+
+    void setRegion(const QRect &r)
+    {
+        region = r;
+        setFixedSize(r.size());
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        if (image == nullptr || image->isNull() || region.isEmpty()) {
+            painter.fillRect(rect(), Qt::black);
+            return;
+        }
+        painter.drawImage(QPoint(0, 0), *image, region);
+    }
+
+private:
+    const QImage *image;
+    QRect         region;
+};
+
+/* ------------------------------------------------------------------ */
 /* the canvas: shows the surface the C code renders into               */
 /* ------------------------------------------------------------------ */
 
@@ -64,7 +100,7 @@ public:
         rebuildImage();
     }
 
-    QSize sizeHint() const override { return image.size(); }
+    QSize sizeHint() const override { return mapRegion.size(); }
 
     /* Blocking key read for the archive browser.  The browser draws itself
      * on the screen surface and then asks for a key, so a nested event loop
@@ -99,7 +135,7 @@ public:
          * would eat the key the outer animate() is waiting for. */
         if (animating) return 0;
 
-        update();
+        refresh();
         animating = true;
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
         animating = false;
@@ -111,6 +147,13 @@ public:
 
     bool isWaiting() const { return waiting; }
     bool isAnimating() const { return animating; }
+
+    /* repaint this widget and every pane showing another part of the
+     * same surface */
+    void refresh() { update(); emit surfaceChanged(); }
+
+    const QImage *surface() const { return &image; }
+    QRect mapArea() const { return mapRegion; }
     void setPolledKey(int code) { polledKey = code; }
 
     /* used by the buttons, and on close, to answer a waitForKey() */
@@ -128,18 +171,39 @@ public:
         int w = qt_screen_width();
         int h = qt_screen_height();
 
-        /* GRX RAM24 stores the components in BGR order */
         if (pixels && w > 0 && h > 0) {
-            image = QImage(pixels, w, h, qt_screen_stride(), QImage::Format_BGR888);
-            setFixedSize(w, h);
+            image = QImage(pixels, w, h, qt_screen_stride(),
+                           formatFor(qt_screen_bpp()));
+            /* this widget shows the map region only - the palette and the
+             * readout are shown by their own panes, which do not scroll */
+            mapRegion = QRect(qt_map_origin_x(), qt_map_origin_y(),
+                              qt_map_width(), qt_map_height());
+            mapRegion &= QRect(0, 0, w, h);
+            setFixedSize(mapRegion.size());
         }
 
         unsigned char *map = qt_map_pixels();
         int mw = qt_map_width();
         int mh = qt_map_height();
         if (map && mw > 0 && mh > 0) {
-            mapImage = QImage(map, mw, mh, qt_map_stride(), QImage::Format_BGR888);
+            mapImage = QImage(map, mw, mh, qt_map_stride(),
+                              formatFor(qt_map_bpp()));
             mapOrigin = QPoint(qt_map_origin_x(), qt_map_origin_y());
+        }
+    }
+
+    /* How GRX laid the pixels out.  It is chosen at run time: the memory
+     * driver picks the mode, and a build elsewhere may not pick the same
+     * one this machine does. */
+    static QImage::Format formatFor(int bpp)
+    {
+        switch (bpp) {
+        case 24: return QImage::Format_BGR888;  /* GRX RAM24: B,G,R bytes */
+        case 32: return QImage::Format_RGB32;   /* 0x00RRGGBB little endian */
+        default:
+            fprintf(stderr, "unsupported GRX surface depth: %d bpp "
+                            "(run with IMAGEQT_DEBUG=1 for details)\n", bpp);
+            return QImage::Format_BGR888;
         }
     }
 
@@ -147,6 +211,7 @@ signals:
     void positionChanged(int x, int y);
     void quitRequested();
     void waitStateChanged(bool waiting);
+    void surfaceChanged();
 
 protected:
     /* The archive browser and the animation both read keys themselves, and
@@ -155,16 +220,9 @@ protected:
      * route to keyPressEvent(). */
     bool eventFilter(QObject *object, QEvent *event) override
     {
-        if (event->type() == QEvent::FocusIn || event->type() == QEvent::WindowActivate)
-            fprintf(stderr, "DBG: focus/activate event %d on %s\n", (int)event->type(),
-                    object->metaObject()->className());
         if (event->type() != QEvent::KeyPress)
             return QWidget::eventFilter(object, event);
         int code = translate(static_cast<QKeyEvent *>(event));
-        {   QKeyEvent *ke = static_cast<QKeyEvent *>(event);
-            fprintf(stderr, "DBG: KeyPress target=%s key=0x%x text='%s' -> code=%d\n",
-                    object->metaObject()->className(), ke->key(),
-                    ke->text().toUtf8().constData(), code); }
         if (code < 0)
             return QWidget::eventFilter(object, event);
 
@@ -172,7 +230,7 @@ protected:
         else if (animating) polledKey = code;  /* animation loop   */
         else {                                 /* normal operation */
             if (key_pressed(code)) emit quitRequested();
-            update();
+            refresh();
         }
         return true;
     }
@@ -186,14 +244,19 @@ protected:
         }
         /* the core composes the map into this surface itself, so that the
          * archive window it draws afterwards is not hidden by it */
-        painter.drawImage(event->rect(), image, event->rect());
+        painter.drawImage(event->rect(), image,
+                          event->rect().translated(mapRegion.topLeft()));
     }
 
     void mouseMoveEvent(QMouseEvent *event) override
     {
-        mouse_move(event->x(), event->y());
-        emit positionChanged(event->x(), event->y());
-        update();
+        /* the core works in surface coordinates, this widget starts at the
+         * map's corner */
+        int x = event->x() + mapRegion.x();
+        int y = event->y() + mapRegion.y();
+        mouse_move(x, y);
+        emit positionChanged(x, y);
+        refresh();
     }
 
     void mousePressEvent(QMouseEvent *event) override
@@ -201,8 +264,9 @@ protected:
         /* the core calls this one mouse_click_left, but the event loop only
          * ever fed it right button presses - keep that behaviour */
         if (event->button() == Qt::RightButton) {
-            mouse_click_left(event->x(), event->y());
-            update();
+            mouse_click_left(event->x() + mapRegion.x(),
+                             event->y() + mapRegion.y());
+            refresh();
         }
         setFocus();
     }
@@ -236,6 +300,7 @@ private:
     }
 
     QImage image;      /* the whole composed surface */
+    QRect  mapRegion;  /* the part of it this widget shows */
     QImage mapImage;   /* the map alone, kept for debugging */
     QPoint mapOrigin;
 
@@ -275,20 +340,46 @@ public:
         canvas = new MapCanvas;
         g_canvas = canvas;
 
-        QScrollArea *scroll = new QScrollArea;
-        scroll->setWidget(canvas);
-        scroll->setAlignment(Qt::AlignCenter);
-        scroll->setBackgroundRole(QPalette::Dark);
+        mapScroll = new QScrollArea;
+        mapScroll->setWidget(canvas);
+        mapScroll->setAlignment(Qt::AlignCenter);
+        mapScroll->setBackgroundRole(QPalette::Dark);
+
+        /* The palette and the cursor readout are parts of the same surface,
+         * shown in panes of their own so that scrolling the map does not
+         * carry them off screen. */
+        int x, y, w, h;
+        legend = new SurfaceStrip(canvas->surface());
+        qt_legend_rect(&x, &y, &w, &h);
+        legend->setRegion(QRect(x, y, w, h));
+
+        readout = new SurfaceStrip(canvas->surface());
+        qt_readout_rect(&x, &y, &w, &h);
+        readout->setRegion(QRect(x, y, w, h));
 
         QWidget *central = new QWidget;
         QHBoxLayout *layout = new QHBoxLayout(central);
         layout->addWidget(buildPanel());
-        layout->addWidget(scroll, 1);
+        layout->addWidget(legend,  0, Qt::AlignTop);
+        layout->addWidget(mapScroll, 1);
+        layout->addWidget(readout, 0, Qt::AlignTop);
         setCentralWidget(central);
+
+        /* every pane draws from the one surface, so they repaint together */
+        connect(canvas, &MapCanvas::surfaceChanged, legend,
+                QOverload<>::of(&QWidget::update));
+        connect(canvas, &MapCanvas::surfaceChanged, readout,
+                QOverload<>::of(&QWidget::update));
 
         connect(canvas, &MapCanvas::quitRequested, this, &QWidget::close);
         connect(canvas, &MapCanvas::waitStateChanged, this,
                 [this](bool waiting) {
+                    /* the browser is drawn at the map's top left corner,
+                     * which may be scrolled out of sight */
+                    if (waiting) {
+                        mapScroll->horizontalScrollBar()->setValue(0);
+                        mapScroll->verticalScrollBar()->setValue(0);
+                    }
                     /* make it obvious where the keys go now */
                     archiveKeys->setTitle(waiting ? tr("Archive keys - ACTIVE")
                                                   : tr("Archive keys"));
@@ -314,13 +405,18 @@ public:
         connect(poll, &QTimer::timeout, this, [this]() {
             if (canvas->isWaiting() || canvas->isAnimating()) return;
             timer();
-            canvas->update();
+            canvas->refresh();
         });
         poll->start(1000);
 
         setWindowTitle(tr("IMAGE - radar maps"));
         statusBar()->showMessage(tr("Ready"));
     }
+
+private:
+    QScrollArea  *mapScroll = nullptr;
+    SurfaceStrip *legend    = nullptr;
+    SurfaceStrip *readout   = nullptr;
 
 private slots:
     void send(int key)
@@ -336,7 +432,7 @@ private slots:
             return;
         }
         if (key_pressed(key)) { close(); return; }
-        canvas->update();
+        canvas->refresh();
     }
 
 protected:
@@ -462,9 +558,24 @@ int main(int argc, char *argv[])
     /* read the config, load the newest files and render the first frame */
     if (image_init(argc, argv) != 0) return 1;
 
+    /* IMAGEQT_DEBUG=1 reports how GRX laid out the surfaces, which is what
+     * one needs to explain a picture that comes out wrong on another
+     * machine or another build of the library */
+    if (qgetenv("IMAGEQT_DEBUG").toInt() != 0) qt_dump_surfaces();
+
     MainWindow window;
     window.resize(1280, 800);
     window.show();
+
+    /* IMAGEQT_SHOT=<file> saves a picture of the window and exits, which is
+     * how one checks the layout on a machine one cannot look at */
+    QByteArray shot = qgetenv("IMAGEQT_SHOT");
+    if (!shot.isEmpty()) {
+        QTimer::singleShot(600, [&window, shot]() {
+            window.grab().save(QString::fromLocal8Bit(shot));
+            qApp->quit();
+        });
+    }
 
     int status = app.exec();
     close_graph();
