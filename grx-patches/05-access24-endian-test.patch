@@ -1,6 +1,6 @@
 --- a/src/include/access24.h
 +++ b/src/include/access24.h
-@@ -29,7 +29,11 @@
+@@ -29,11 +29,18 @@
  #include "mempeek.h"
  #endif
  
@@ -13,3 +13,11 @@
  /* read color component from 32bit variable */
  #define RD24BYTE(p,idx)    peek_b(((GR_int8u *)(&p))+idx)
  /* write color componet to 32bit variable */
+-#define WR24BYTE(p,idx,cc) poke_b(((GR_int8u *)(&p))+idx,cc)
++/* EXPERIMENT: left on the pre-patch (+1) form to find out which half of
++ * the access24.h change caused the black map region.  RD and WR are a
++ * matched pair, so this is a bisect step, not a final state. */
++#define WR24BYTE(p,idx,cc) poke_b(((GR_int8u *)(&p))+idx+1,cc)
+ #else
+ /* read color component from 32bit variable */
+ #define RD24BYTE(p,idx)    peek_b(((GR_int8u *)(&p))+idx+1)
