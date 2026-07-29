@@ -81,19 +81,20 @@ int temp_files_read[MaxPorts],ip[MaxPorts],ip_min,min;
 int i,j;
 
   for (i=0;i<MaxPorts;i++) {
-    TempFiles[i]=malloc(sizeof(struct MyFile)*MaxFiles);
+    TempFiles[i]=NULL;
     temp_files_read[i]=0;
-  }
-
-  if (TempFiles[MaxPorts-1]==NULL) {
-    printf("out of memory\n");
-    exit(2);
   }
 
   for (i=0;i<MaxPorts;i++) {
      sprintf(dir_name,"%s/port%d",mapdir,i+1);
      arc_dir=opendir(dir_name);
      if (arc_dir==NULL) continue;
+     /* allocated here, not up front: most of the ports have no directory */
+     TempFiles[i]=malloc(sizeof(struct MyFile)*MaxFiles);
+     if (TempFiles[i]==NULL) {
+       printf("out of memory\n");
+       exit(2);
+     }
      j=0;
      while (j<MaxFiles && (entry = readdir(arc_dir)) != NULL)
        if (entry->d_name[0]!='.' && strlen(entry->d_name)==12) {
@@ -122,7 +123,7 @@ int i,j;
       Files[j].flag=0;
       for (i=0;i<MaxPorts;i++)
 	if (ip[i]!=-1 && !cmp(&TempFiles[min][ip_min],&TempFiles[i][ip[i]])) {
-	   Files[j].flag|=1LL<<i;
+	   Files[j].flag|=PORT_BIT(i);
 	   if (++ip[i]==temp_files_read[i]) ip[i]=-1;
       }
       if (++j==MaxFiles) {
@@ -142,7 +143,8 @@ int i,j;
 #define WindowX 100  //120
 #define WindowY 100
 #define WindowSizeX 700  //500
-#define WindowSizeY 170       //120  /* 70 */
+/* one row per port: MaxPorts*(LineSpace+EachLine) has to fit in LineLength */
+#define WindowSizeY 250       //170  /* 120, 70 */
 
 #define YearY 10
 
@@ -167,7 +169,7 @@ int i,j;
 #define Window2X     WindowX+5
 #define Window2Y     WindowY+WindowSizeY
 #define Window2SizeX WindowSizeX-10
-#define Window2SizeY 150  //100 /* 40 */
+#define Window2SizeY 215  //150, 100 /* 40 */
 
 #define Cursor2SizeX 3
 #define Cursor2SizeY 6
@@ -273,7 +275,7 @@ do {
 	for (j=0;j<=n-i;j++) {
 		ofst = (Files[i+j].FileMonth-Files[i].FileMonth)*month_width+1+
 				 (Files[i+j].FileDay-1)*(month_width-2)/30;
-		for (k=0;k<MaxPorts;k++) if (Files[i+j].flag & (1LL<<k))
+		for (k=0;k<MaxPorts;k++) if (Files[i+j].flag & PORT_BIT(k))
 		   my_line(WindowX+BeginX+ofst,WindowY+BeginY+UpperOffset+(LineSpace+EachLine)*k,
 			 WindowX+BeginX+ofst,WindowY+BeginY+UpperOffset+(LineSpace+EachLine)*k+EachLine);
 	}
@@ -354,7 +356,7 @@ char s5[80];
 		ofst = (Files[i+j].FileHour-Files[i+FirstDay].FileHour)*hour_width+1+
 			 (Files[i+j].FileMinute)*(hour_width-2)/59;
 
-		for (k=0;k<MaxPorts;k++) if (Files[i+j].flag & (1LL<<k)) {
+		for (k=0;k<MaxPorts;k++) if (Files[i+j].flag & PORT_BIT(k)) {
 //				if (Files[i+j].SummFlag & (1<<k)) current_color=7; else current_color=BLUE;
 				my_line(Window2X+Begin2X+ofst,
 			 Window2Y+Begin2Y+UpperOffset2+(LineSpace2+EachLine2)*k,

@@ -10,7 +10,7 @@
 extern GrContext *RamContext;
 
 int cur_file;
-int64_t show_maps=0xFFFFFFFFFFFFFFFF;
+port_mask show_maps=PORT_ALL;
 
 int Second=10;
 int xck,yck,xc2,yc2;
@@ -318,7 +318,7 @@ int max_down=MSIZE/2-WINDOW_YSIZE/MPIX/2-1;
                        case 350: case 351: case 352:
                        case 353: case 354: case 355:
                        case 356: case 357:
-        		 show_maps^=1LL<<(key-350+30); read_files(cur_file,0);
+        		 show_maps^=PORT_BIT(key-350+30); read_files(cur_file,0);
 			  flago=1;
 			  break;
 
@@ -388,10 +388,10 @@ if (time) {
      if(Files[cur_file].FileMinute==mins && Files[cur_file].FileHour==hrs) break;
 } else if (port_only)  {
   for (cur_file=FilesRead;cur_file--;cur_file>0) 
-        if (Files[cur_file].flag & (1LL<<(port_only-1))) {
+        if (Files[cur_file].flag & PORT_BIT(port_only-1)) {
             if (lastflag) break;  else lastflag=1;   //find previous
         }
-  show_maps=1LL<<(port_only-1);
+  show_maps=PORT_BIT(port_only-1);
 } else  {
   for (cur_file=FilesRead;cur_file--;cur_file>0) {
         if (lastflag && Files[cur_file].FileMinute%10==0) break;

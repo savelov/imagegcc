@@ -21,7 +21,13 @@
 
 #define NUM_COLORS 16        /* number of custom reserved colors */
 #define MaxFiles 200000        /* max files in directory */
-#define MaxPorts 63
+#define MaxPorts 99
+
+/* One bit per port.  Up to 63 ports fitted in a 64 bit word; beyond that the
+ * mask needs a wider type, and gcc's __int128 carries 128 of them. */
+typedef unsigned __int128 port_mask;
+#define PORT_BIT(p)  ((port_mask)1 << (p))
+#define PORT_ALL     (~(port_mask)0)
 #define PMSG 16
 #define c10 10
 
@@ -127,7 +133,7 @@ struct MyFile {                             /* For an archive */
   unsigned char FileDay;
   unsigned char FileHour;
   unsigned char FileMinute;
-  int64_t flag;
+  port_mask flag;
 };
 extern struct MyFile Files[MaxFiles];
 extern int FilesRead;
@@ -168,7 +174,7 @@ extern void ViewString(int x,int y,int size_x,int size_y,char *line[]);
 
 extern void ViewForecast(int number);
 
-extern int64_t show_maps;
+extern port_mask show_maps;
 
 
 extern unsigned char stormmsg[PMSG][c10];

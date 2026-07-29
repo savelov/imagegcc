@@ -380,7 +380,7 @@ int err;
   }
 	for (port=MaxPorts-1;port>=0;port--)
 //		for (port=0;port<=MaxPorts;port++)
-    if ((Files[number].flag & (1LL<<port)) /*&& (show_maps & (1<<port))*/ ) {
+    if ((Files[number].flag & PORT_BIT(port)) /*&& (show_maps & (1<<port))*/ ) {
                                                 /* if exist Map file */
      sprintf(archive_name,"%s/port%1d/%02d%02d%02d%02d.%02dm",
        mapdir,port+1,Files[number].FileYear,Files[number].FileMonth,
@@ -572,7 +572,7 @@ memset(str,0,sizeof str);
 				free(tb);
  			 if (buffer[i+1].strlength==mapsize*mapsize+8U) {
  					ptr=get_ptr(L0[port],B0[port],maps[i].mapres,mapsize,MSIZE_int);
-				if(show_maps & (1LL<<port))
+				if(show_maps & PORT_BIT(port))
 		{   koord(buffer[i+1].strptr+8,ptr,mapsize,port);
 				if(maps[i].mapid==MAP_H ) 
 				    walk_table(buffer[i+1].strptr+8,maps[i].bufdata,ptr,mapsize,MSIZE_int);
@@ -617,7 +617,7 @@ memset(str,0,sizeof str);
 				free(tb);
 				if (buffer[1].strlength==mapsize*mapsize+8U) {
 					 ptr=get_ptr(L0[port],B0[port],maps[current_map].mapres,mapsize,MSIZE_int);
-					if(show_maps & (1LL<<port))
+					if(show_maps & PORT_BIT(port))
 			{
 				 koord(buffer[1].strptr+8,ptr,mapsize,port);
 
