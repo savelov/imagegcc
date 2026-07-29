@@ -403,7 +403,7 @@ if (time) {
 
  grafs=malloc(sizeof(struct info)*MaxTLO);
  if (grafs==NULL) exit(2);
- if (!port_only && !server) set_cur_geogr(2);
+ //if (!port_only && !server) set_cur_geogr(2);
 
 
 do {
