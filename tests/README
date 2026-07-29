@@ -1,0 +1,50 @@
+GRX regression probes
+=====================
+
+Six self-contained programs, no application code, each exercising one GRX
+primitive.  They exist because porting this program to Windows turned up two
+GRX bugs that Linux hides completely - fresh heap pages are zero there, and
+long is 64 bit - so the way to find them was to run the same primitive on
+both platforms and compare bytes.
+
+Run them on both and diff the output:
+
+    ./run-tests.sh              # host
+    ./run-tests.sh --windows    # mingw + wine
+
+What each one asserts
+---------------------
+
+sttzero.c           sttzero() must clear all of a GrContext.  It cleared 52
+                    of 104 bytes on Win64, leaving gc_xoffset/gc_yoffset as
+                    garbage that was then added to every draw coordinate.
+                    Pass: "bytes still non-zero after sttzero: 0".
+
+alloc-colour.c      GrAllocColor() must return the same packed value on
+                    every platform.  Pass: all six lines identical to Linux.
+
+colour-readback.c   Draw a box, then read the bytes back out of the surface.
+                    Catches colours that allocate correctly but do not get
+                    written.  Pass: bytes match the colour, on both.
+
+fill-runs-8bpp.c    Fill widths 1..8 in an 8bpp context and count the bytes
+                    actually written.  w=8 wrote 4 bytes on Win64 - that is
+                    what made gen-bitmap's raster ragged.
+                    Pass: every width fills exactly w bytes.
+
+fill-runs-24bpp.c   Same idea at 24bpp, for equal-byte colours (which take
+                    driver24.h's shortcut) and unequal ones (general path).
+                    A 4 pixel run of 0xc0c0c0 wrote 9 of 12 bytes.
+                    Pass: every run fully filled.  Note the "<-- ZEROS" tag
+                    on the 0080c0 rows is expected: that colour legitimately
+                    has a zero component.
+
+clear-overrun.c     Supply our own frame buffer with a guard region behind
+                    it, clear the context, and check the guard.  This is the
+                    one that first caught the uninitialised context.
+                    Pass: "clean" at every geometry, no crash.
+
+Both bugs traced back to one line in src/include/libgrx.h, which keyed its
+integer types on architecture names and claimed long was 64 bit on mingw.
+See grx-patches/ for the fixes; patch 02 is the root cause, 04 and 05 are
+the two symptoms that were fixed first.
