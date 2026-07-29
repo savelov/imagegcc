@@ -1,0 +1,15 @@
+--- a/src/include/access24.h
++++ b/src/include/access24.h
+@@ -29,7 +29,11 @@
+ #include "mempeek.h"
+ #endif
+ 
+-#if BYTE_ORDER==LITTLE_ENDIAN
++/* An undefined BYTE_ORDER evaluates to 0 in #if, so a platform that
++ * defines LITTLE_ENDIAN but not BYTE_ORDER (mingw) silently selected the
++ * big endian variant below and read the colour bytes off by one.  Only
++ * use that variant when the target is known to be big endian. */
++#if !(defined(BYTE_ORDER) && defined(BIG_ENDIAN) && BYTE_ORDER==BIG_ENDIAN)
+ /* read color component from 32bit variable */
+ #define RD24BYTE(p,idx)    peek_b(((GR_int8u *)(&p))+idx)
+ /* write color componet to 32bit variable */
