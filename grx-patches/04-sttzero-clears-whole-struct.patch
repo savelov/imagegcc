@@ -1,0 +1,15 @@
+--- a/src/include/memfill.h
++++ b/src/include/memfill.h
+@@ -888,7 +888,11 @@
+ } while(0)
+ 
+ 
+-#define sttzero(p)              memzero((p),sizeof(*(p)))
++/* memzero() scales the byte count for a wider unit than the fill writes
++ * on some builds, clearing only part of the object.  A struct has to be
++ * cleared completely - GrCreateFrameContext() relies on it. */
++#include <string.h>
++#define sttzero(p)              memset((p),0,sizeof(*(p)))
+ 
+ #if (defined(__WATCOMC__) && !defined(__386__))
+ /*
