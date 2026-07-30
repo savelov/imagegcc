@@ -55,7 +55,28 @@
  LDOPT = -s
  endif
  
-@@ -171,15 +176,16 @@
+@@ -128,7 +133,11 @@
+ # Set the default GRX font path
+ #GRX_DEFAULT_FONT_PATH=${datadir}/grx/fonts
+ 
+-# check for i386 or x86_64 build
++# check for i386 or x86_64 build.  -m32/-m64 exist only on x86; aarch64 and
++# the other targets reject them outright, so ask the machine first.  Override
++# with "make UNAME_M=..." when cross compiling.
++UNAME_M := $(shell uname -m)
++ifneq (,$(filter $(UNAME_M),i386 i486 i586 i686 x86_64 amd64))
+ ifeq ($(BUILD_X86_64),y)
+ CCOPT += -m64
+ LDOPT += -m64
+@@ -136,6 +145,7 @@
+ CCOPT += -m32
+ LDOPT += -m32
+ endif
++endif
+ 
+ endif
+ 
+@@ -171,15 +181,16 @@
  ifdef GRXVX11
  
  # The X11 base dir on your system
