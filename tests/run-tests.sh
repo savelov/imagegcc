@@ -14,9 +14,9 @@ GRX=${GRX:-../../grx249/contrib/grx249}
 TESTS="sttzero alloc-colour colour-readback fill-runs-8bpp fill-runs-24bpp"
 
 case "$1$(uname -s)" in
-    --windows*)          CC=x86_64-w64-mingw32-gcc; WIN=1; RUN=wine ;;
-    *MINGW*|*MSYS*)      CC=gcc;                    WIN=1; RUN=     ;;
-    *)                   CC=gcc;                    WIN=0; RUN=     ;;
+    --windows*)              CC=${CC:-x86_64-w64-mingw32-gcc}; WIN=1; RUN=wine ;;
+    *MINGW*|*MSYS*|*CLANGARM*) CC=${CC:-gcc};                    WIN=1; RUN=     ;;
+    *)                       CC=${CC:-gcc};                    WIN=0; RUN=     ;;
 esac
 
 if [ "$WIN" = 1 ]; then

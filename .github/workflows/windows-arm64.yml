@@ -1,0 +1,103 @@
+name: windows-arm64
+
+# Windows on ARM64, built with clang in MSYS2's CLANGARM64 environment.
+#
+# Unlike the other three jobs, nothing here could be tried locally: there is
+# no aarch64-windows toolchain on the development machine and wine cannot run
+# ARM64 PE binaries on x86.  What *was* checked beforehand is the part that
+# does not need the target: the whole program builds with clang on Linux, and
+# clang accepts -fpermissive but silently ignores it, so the flags below name
+# the relaxations one by one instead.
+#
+# Expect the first runs to need adjusting - most likely the package names, or
+# Qt5 not being available for CLANGARM64 (make.sh skips imageqt when Qt is
+# missing, so that alone should not fail the build).
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  clangarm64:
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 / CLANGARM64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: >-
+            make
+            patch
+            tar
+            mingw-w64-clang-aarch64-clang
+            mingw-w64-clang-aarch64-gcc-compat
+            mingw-w64-clang-aarch64-pkgconf
+            mingw-w64-clang-aarch64-zlib
+            mingw-w64-clang-aarch64-libpng
+            mingw-w64-clang-aarch64-proj
+            mingw-w64-clang-aarch64-minizip
+
+      - name: Provide the GRX sources
+        env:
+          GRX_URL: ${{ vars.GRX_URL || 'http://grx.gnu.de/download/grx249.tar.gz' }}
+          GRX_SHA256: ${{ vars.GRX_SHA256 || 'a899956b3ee46492696114d220431405320c64c1f6f058fdfc2b4d6a2beae786' }}
+        run: |
+          set -e
+          if [ -d third_party/grx249 ]; then
+            cp -r third_party/grx249 grx-build
+          else
+            curl -fL "$GRX_URL" -o grx-src.tar.gz
+            echo "$GRX_SHA256  grx-src.tar.gz" | sha256sum -c -
+            mkdir grx-build
+            tar xzf grx-src.tar.gz -C grx-build --strip-components=1
+          fi
+          test -f grx-build/makedefs.grx
+
+      - name: Apply the GRX patches
+        run: |
+          set -e
+          for p in grx-patches/*.patch; do
+            echo "applying $p"
+            patch -N -p1 -d grx-build < "$p"
+          done
+
+      # LEGACY_C overrides the -fpermissive that makedefs.grx sets for gcc.
+      # CC=clang because the makefiles call $(CROSS_PLATFORM)gcc by default.
+      - name: Build GRX (Win32 GDI driver, clang)
+        run: |
+          make -C grx-build -f makefile.w32 libs \
+            CC=clang \
+            LEGACY_C="-std=gnu89 -Wno-implicit-int -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-return-type -Wno-deprecated-non-prototype"
+
+      - name: Build the tools
+        run: GRX=grx-build CC=clang CXX=clang++ ./make.sh
+
+      - name: Run the GRX probes
+        run: cd tests && GRX=../grx-build CC=clang ./run-tests.sh
+
+      - name: Collect a runnable bundle
+        run: |
+          set -e
+          mkdir -p dist
+          cp *.exe dist/ 2>/dev/null || true
+          cp -r config paths dist/ 2>/dev/null || true
+          for exe in dist/*.exe; do
+            ldd "$exe" 2>/dev/null | awk '/\/clangarm64\/bin\// {print $3}'
+          done | sort -u | while read -r dll; do
+            [ -f "$dll" ] && cp -n "$dll" dist/ || true
+          done
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imagegcc-windows-arm64
+          path: dist
+          if-no-files-found: error
