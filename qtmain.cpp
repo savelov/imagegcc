@@ -47,6 +47,16 @@ enum {
     KEY_F3         = 317   /* archive: mark animation end   */
 };
 
+/* QMouseEvent lost x()/y() in Qt6 and gained position(); Qt5 has pos() */
+static inline QPoint eventPos(QMouseEvent *e)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return e->position().toPoint();
+#else
+    return e->pos();
+#endif
+}
+
 /* ------------------------------------------------------------------ */
 /* a fixed pane onto one region of the surface                         */
 /* ------------------------------------------------------------------ */
@@ -252,8 +262,8 @@ protected:
     {
         /* the core works in surface coordinates, this widget starts at the
          * map's corner */
-        int x = event->x() + mapRegion.x();
-        int y = event->y() + mapRegion.y();
+        int x = eventPos(event).x() + mapRegion.x();
+        int y = eventPos(event).y() + mapRegion.y();
         mouse_move(x, y);
         emit positionChanged(x, y);
         refresh();
@@ -264,8 +274,8 @@ protected:
         /* the core calls this one mouse_click_left, but the event loop only
          * ever fed it right button presses - keep that behaviour */
         if (event->button() == Qt::RightButton) {
-            mouse_click_left(event->x() + mapRegion.x(),
-                             event->y() + mapRegion.y());
+            mouse_click_left(eventPos(event).x() + mapRegion.x(),
+                             eventPos(event).y() + mapRegion.y());
             refresh();
         }
         setFocus();

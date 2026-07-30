@@ -44,6 +44,7 @@ jobs:
             mingw-w64-clang-aarch64-libpng
             mingw-w64-clang-aarch64-proj
             mingw-w64-clang-aarch64-minizip
+            mingw-w64-clang-aarch64-qt6-base
 
       - name: Provide the GRX sources
         env:
@@ -93,6 +94,10 @@ jobs:
             ldd "$exe" 2>/dev/null | awk '/\/clangarm64\/bin\// {print $3}'
           done | sort -u | while read -r dll; do
             [ -f "$dll" ] && cp -n "$dll" dist/ || true
+          done
+          # Qt looks for its platform plugin in platforms/ next to the exe
+          for p in /clangarm64/share/qt6/plugins/platforms/qwindows.dll; do
+            [ -f "$p" ] && { mkdir -p dist/platforms; cp "$p" dist/platforms/; }
           done
           ls -l dist
 

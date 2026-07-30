@@ -87,9 +87,37 @@ echo "building imagegcc ..."
 $CC $CFLAGS -DGUI -o imagegcc  -I $GRX/include/ $SRC $LIBS
 
 # imageqt: same drawing code, but rendered into memory and shown by Qt.
-# Skipped when Qt5 is not installed, so the other two targets still build.
-if pkg-config --exists Qt5Widgets 2>/dev/null; then
-    echo "building imageqt ..."
+# Qt6 first, then Qt5 - MSYS2 ships only Qt6 for CLANGARM64, while the
+# mingw64 and debian toolchains still carry Qt5.  Force one with QT=5 or
+# QT=6.  Skipped entirely when neither is present, so the other two
+# targets still build.
+QTPKG=
+case "${QT:-auto}" in
+    6) pkg-config --exists Qt6Widgets 2>/dev/null && QTPKG=Qt6Widgets ;;
+    5) pkg-config --exists Qt5Widgets 2>/dev/null && QTPKG=Qt5Widgets ;;
+    *) if   pkg-config --exists Qt6Widgets 2>/dev/null; then QTPKG=Qt6Widgets
+       elif pkg-config --exists Qt5Widgets 2>/dev/null; then QTPKG=Qt5Widgets
+       fi ;;
+esac
+
+if [ -n "$QTPKG" ]; then
+    QTCORE=${QTPKG%Widgets}Core
+    # moc lives in host_bins for Qt5 and in libexec for Qt6, and neither
+    # variable is reliably set, so try the usual places in turn
+    MOC=
+    for cand in \
+        "$(pkg-config --variable=host_bins  $QTCORE 2>/dev/null)/moc" \
+        "$(pkg-config --variable=libexecdir $QTCORE 2>/dev/null)/moc" \
+        "$(pkg-config --variable=prefix $QTCORE 2>/dev/null)/share/${QTCORE%Core}/bin/moc" \
+        /usr/lib/qt6/libexec/moc moc-qt6 moc6 moc; do
+        [ -x "$cand" ] && MOC=$cand && break
+        command -v "$cand" >/dev/null 2>&1 && MOC=$cand && break
+    done
+    [ -z "$MOC" ] && { echo "make.sh: $QTPKG found but no moc; skipping imageqt" >&2; QTPKG=; }
+fi
+
+if [ -n "$QTPKG" ]; then
+    echo "building imageqt ($QTPKG) ..."
     rm -f imageqt imageqt.exe qtmain.moc
     OBJDIR=.qtobj
     mkdir -p $OBJDIR
@@ -98,11 +126,11 @@ if pkg-config --exists Qt5Widgets 2>/dev/null; then
         $CC $CFLAGS -DQTGUI -I $GRX/include/ -c $src -o $OBJDIR/${src%.c}.o
     done
 
-    moc qtmain.cpp -o qtmain.moc
-    $CXX -g -fPIC $(pkg-config --cflags Qt5Widgets) -c qtmain.cpp -o $OBJDIR/qtmain.o
-    $CXX -o imageqt $OBJDIR/*.o $LIBS $(pkg-config --libs Qt5Widgets)
+    "$MOC" qtmain.cpp -o qtmain.moc
+    $CXX -g -fPIC $(pkg-config --cflags $QTPKG) -c qtmain.cpp -o $OBJDIR/qtmain.o
+    $CXX -o imageqt $OBJDIR/*.o $LIBS $(pkg-config --libs $QTPKG)
 else
-    echo "skipping imageqt: Qt5Widgets not found (install qtbase5-dev)" >&2
+    echo "skipping imageqt: no Qt5 or Qt6 found" >&2
 fi
 
 echo "done"
