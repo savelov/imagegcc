@@ -7,10 +7,11 @@ static void run(int w, GrColor c, const char *tag)
     GrFilledBox(100, 50, 100 + w - 1, 50, GrAllocColor(0,0,0));   /* clear */
     GrFilledBox(100, 50, 100 + w - 1, 50, c);
     p = (unsigned char *)s->gc_baseaddr[0] + (long)50 * s->gc_lineoffset + 100*3;
-    for (i = 0; i < w*3; i++) if (p[i] == 0) bad++;
+    for (i = 0; i < w*3; i++)
+        if (p[i] != (unsigned char)((c >> ((i % 3) * 8)) & 0xff)) bad++;
     printf("  w=%d %-9s bytes:", w, tag);
     for (i = 0; i < w*3 && i < 12; i++) printf(" %02x", p[i]);
-    printf("   %s\n", bad ? "<-- ZEROS" : "ok");
+    printf("   %s\n", bad ? "<-- WRONG" : "ok");
 }
 int main(void)
 {

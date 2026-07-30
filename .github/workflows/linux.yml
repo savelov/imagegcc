@@ -1,0 +1,68 @@
+name: linux
+
+# Same sources, same GRX patches, built against X11 instead of the Win32
+# driver.  The GRX probes run here too: they exist to be compared between
+# platforms, so a failure on one and not the other is the signal.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gcc-x11:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libx11-dev zlib1g-dev libpng-dev \
+            libproj-dev libminizip-dev qtbase5-dev qtbase5-dev-tools
+
+      - name: Provide the GRX sources
+        env:
+          GRX_URL: ${{ vars.GRX_URL || 'http://grx.gnu.de/download/grx249.tar.gz' }}
+          GRX_SHA256: ${{ vars.GRX_SHA256 || 'a899956b3ee46492696114d220431405320c64c1f6f058fdfc2b4d6a2beae786' }}
+        run: |
+          set -e
+          if [ -d third_party/grx249 ]; then
+            cp -r third_party/grx249 grx-build
+          else
+            curl -fL "$GRX_URL" -o grx-src.tar.gz
+            echo "$GRX_SHA256  grx-src.tar.gz" | sha256sum -c -
+            mkdir grx-build
+            tar xzf grx-src.tar.gz -C grx-build --strip-components=1
+          fi
+          test -f grx-build/makedefs.grx
+
+      - name: Apply the GRX patches
+        run: |
+          set -e
+          for p in grx-patches/*.patch; do
+            echo "applying $p"
+            patch -N -p1 -d grx-build < "$p"
+          done
+
+      - name: Build GRX (X11 driver)
+        run: make -C grx-build -f makefile.x11 libs
+
+      - name: Build the tools
+        run: GRX=grx-build ./make.sh
+
+      - name: Run the GRX probes
+        run: cd tests && GRX=../grx-build ./run-tests.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imagegcc-linux-x86_64
+          path: |
+            gen-bitmap
+            imagegcc
+            imageqt
+            config/
+            paths
+          if-no-files-found: error

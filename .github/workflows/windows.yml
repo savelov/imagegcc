@@ -75,6 +75,9 @@ jobs:
       - name: Build the tools
         run: GRX=grx-build ./make.sh
 
+      - name: Run the GRX probes
+        run: cd tests && GRX=../grx-build ./run-tests.sh
+
       - name: Collect a runnable bundle
         run: |
           set -e
