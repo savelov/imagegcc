@@ -11,7 +11,15 @@ on:
 
 jobs:
   gcc-x11:
-    runs-on: ubuntu-latest
+    # x86_64 and arm64.  ARM64 matters here: GRX picked its integer types
+    # from a list of architecture names that did not include aarch64, so
+    # GR_int32 became 64 bit there and every filled box came out striped.
+    # Patch 02 keys on type sizes instead; this job is what proves it.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +66,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: imagegcc-linux-x86_64
+          name: imagegcc-linux-${{ runner.arch }}
           path: |
             gen-bitmap
             imagegcc
