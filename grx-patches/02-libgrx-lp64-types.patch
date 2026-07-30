@@ -28,3 +28,21 @@
  #else
  #define GR_int32 long
  #define GR_PtrInt int
+@@ -139,7 +155,16 @@
+ ** get system endian
+ */
+ #if !defined(_BIG_ENDIAN) && !defined(_LITTLE_ENDIAN)
+-#  if   defined(__TURBOC__) \
++/* gcc and clang have told us this since 4.6; ask them before falling back
++ * to the list below, whose #else pulls in <asm/byteorder.h> - a linux
++ * kernel header that does not exist on, say, windows on arm64. */
++#  if   defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) \
++     && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++#    define _LITTLE_ENDIAN
++#  elif defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) \
++     && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++#    define _BIG_ENDIAN
++#  elif defined(__TURBOC__) \
+      || defined(__WATCOMC__) \
+      || defined(_MSC_VER) \
+      || defined(__alpha__) \
