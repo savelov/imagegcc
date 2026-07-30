@@ -6,9 +6,6 @@
 #include <sys/stat.h>
 #include "image.h"
 
-#ifdef __TURBOC__
-  #define _ptr curp
-#endif
 
 #ifdef __linux__
   #define _ptr _IO_read_ptr
@@ -69,7 +66,7 @@ int line=0;
 
     clear_tlo(inf_ptr,max_number);
        in=fopen(filename,"rt");
-       while(!feof(in) && fscanf(in,"%3s ",s1)==1 && number<MaxTLO)  {
+       while(!feof(in) && fscanf(in,"%3s",s1)==1 && number<MaxTLO)  {
 		line++;
 		 if (!strcmp(s1,"CEL") || !strcmp(s1,"cel")) type=CELL;
 	    else if (!strcmp(s1,"CLP") || !strcmp(s1,"clp")) type=CELP;
@@ -82,7 +79,8 @@ int line=0;
 	    else if (!strcmp(s1,"PLY") || !strcmp(s1,"ply")) type=POLY;
 	    else if (!strcmp(s1,"COL") || !strcmp(s1,"col")) type=COLOR;
 	    else if (!strcmp(s1,"REM") || !strcmp(s1,"rem") || s1[0]==';') {
-	       if (*(in->_ptr-1)!=0xa) fgets(s1,80,in); continue;
+	       { int ch; while ((ch=getc(in))!=EOF && ch!='\n') ; }
+	       continue;
 	    } else { printf("Invalid command code: %s in line %d\n",s1,line); exit(1); }
 	    switch (type) {
 		   case COLOR:
@@ -98,7 +96,7 @@ int line=0;
                     case CELL: break;
 		   case CELP: break;
                    case CELU:
-		       fscanf(in,"%c, %d %d ",&g,&x1,&y1);
+		       fscanf(in," %c, %d %d ",&g,&x1,&y1);
 			if(g=='g') decart(&x1,&y1);
 			inf_ptr[number].type=CELU;
 			inf_ptr[number].x1=x1;
@@ -106,14 +104,14 @@ int line=0;
 			break;
 
 		   case PIXEL:
-		       fscanf(in,"%c, %d %d, %d",&g,&x1,&y1,&c);
+		       fscanf(in," %c, %d %d, %d",&g,&x1,&y1,&c);
 			if(g=='g') decart(&x1,&y1);
 			inf_ptr[number].type=PIXEL;
 			inf_ptr[number].x1=x1;
 			inf_ptr[number].y1=y1;
 			break;
 		   case LINE:
-			fscanf(in,"%c, %d %d, %d %d",&g,&x1,&y1,&x2,&y2);
+			fscanf(in," %c, %d %d, %d %d",&g,&x1,&y1,&x2,&y2);
 			if (g=='g') {
 			  decart(&x1,&y1);
 			  decart(&x2,&y2);
@@ -125,7 +123,7 @@ int line=0;
 			inf_ptr[number].y2=y2;
 			break;
 		   case CIRCLE:
-			fscanf(in,"%c, %d %d, %d",&g,&x1,&y1,&r);
+			fscanf(in," %c, %d %d, %d",&g,&x1,&y1,&r);
 			if(g=='g') decart(&x1,&y1);
 			inf_ptr[number].type=CIRCLE;
 			inf_ptr[number].x1=x1;
@@ -133,7 +131,7 @@ int line=0;
 			inf_ptr[number].x2=r;
 			break;
 		   case TEXT:
-			fscanf(in,"%c, %d %d, %s",&g,&x1,&y1,s1);
+			fscanf(in," %c, %d %d, %79s",&g,&x1,&y1,s1);
 			if(g=='g') decart(&x1,&y1);
 			inf_ptr[number].type=TEXT;
 			inf_ptr[number].x1=x1;
@@ -143,7 +141,7 @@ int line=0;
 			strcpy((char *)inf_ptr[number].ptr,s1);
 			break;
 		   case POLY:
-			fscanf(in,"%c, %d,",&g,&c);
+			fscanf(in," %c, %d,",&g,&c);
 			inf_ptr[number].type=POLY;
 			inf_ptr[number].ptr=p=(int *)malloc(c*2*sizeof(int));
 			inf_ptr[number].size=c;
