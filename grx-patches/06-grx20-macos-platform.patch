@@ -25,3 +25,61 @@
  #include <unistd.h>
  #include <sys/times.h>
  #define real_time(tv) do {                                                  \
+--- a/src/vdrivers/vd_xwin.c
++++ b/src/vdrivers/vd_xwin.c
+@@ -25,6 +25,8 @@
+  **                   GR_biggest_graphics is honored
+  **/
+ 
++/* renamed from plain "setmode": darwin's <unistd.h> declares a BSD
++ * setmode(const char *), which clashes with this static one */
+ #include "libgrx.h"
+ #include "libxwin.h"
+ #include "grdriver.h"
+@@ -70,7 +72,7 @@
+ static void setbank(int bk);
+ static void setrwbanks(int rb,int wb);
+ static void loadcolor(int c,int r,int g,int b);
+-static int setmode(GrVideoMode *mp,int noclear);
++static int grx_setmode(GrVideoMode *mp,int noclear);
+ 
+ GrVideoModeExt grtextext = {
+   GR_frameText,                       /* frame driver */
+@@ -79,7 +81,7 @@
+   { 0, 0, 0 },                        /* color precisions */
+   { 0, 0, 0 },                        /* color component bit positions */
+   0,                                  /* mode flag bits */
+-  setmode,                            /* mode set */
++  grx_setmode,                            /* mode set */
+   NULL,                               /* virtual size set */
+   NULL,                               /* virtual scroll */
+   NULL,                               /* bank set function */
+@@ -94,7 +96,7 @@
+   { 0, 0, 0 },                        /* color precisions */
+   { 0, 0, 0 },                        /* color component bit positions */
+   0,                                  /* mode flag bits */
+-  setmode,                            /* mode set */
++  grx_setmode,                            /* mode set */
+   NULL,                               /* virtual size set */
+   NULL,                               /* virtual scroll */
+   setbank,                            /* bank set function */
+@@ -178,7 +180,7 @@
+   GRX_LEAVE();
+ }
+ 
+-static int setmode(GrVideoMode *mp,int noclear)
++static int grx_setmode(GrVideoMode *mp,int noclear)
+ {
+   char name[100], *window_name, *icon_name;
+   int res;
+--- a/src/vdrivers/vd_mem.c
++++ b/src/vdrivers/vd_mem.c
+@@ -109,7 +109,7 @@
+     NULL,                               /* frame driver override */
+     NULL,                               /* frame buffer address */
+     { 8, 8, 8 },                        /* color precisions */
+-    { 0, 0, 0 },                        /* color component bit positions */
++    { 16, 8, 0 },                       /* color component bit positions */
+     GR_VMODEF_MEMORY,                   /* mode flag bits */
+     mem_setmode,                        /* mode set */
+     NULL,                               /* virtual size set */
