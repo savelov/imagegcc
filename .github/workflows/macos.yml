@@ -66,11 +66,14 @@ jobs:
 
       # X11BASE is /usr on linux; on macOS the headers live under Homebrew.
       # -m64 is already skipped: patch 01 only emits it when uname -m is x86.
+      # gcc is clang here, and clang accepts -fpermissive then ignores it,
+      # so LEGACY_C names the relaxations the way the arm64 job does.
       - name: Build GRX
         run: |
           make -C grx-build -f makefile.x11 libs \
             X11INCS="-I$BREW/include" \
-            X11LIBS="-L$BREW/lib -lX11"
+            X11LIBS="-L$BREW/lib -lX11" \
+            LEGACY_C="-std=gnu89 -Wno-implicit-int -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-return-type -Wno-deprecated-non-prototype"
 
       - name: Build the tools
         run: GRX=grx-build ./make.sh

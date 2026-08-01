@@ -12,3 +12,16 @@
  #define GRX_VERSION     GRX_VERSION_GENERIC_X11
  #endif
  #endif
+--- a/src/mouse/input.h
++++ b/src/mouse/input.h
+@@ -136,7 +136,9 @@
+ #define MS_PER_TICK  (1000L / CLOCKS_PER_SEC)
+ #endif
+ 
+-#if !defined(real_time) && defined(unix)
++/* darwin defines neither unix nor __unix__, and then has no timer at all */
++#if !defined(real_time) \
++ && (defined(unix) || defined(__unix__) || (defined(__APPLE__) && defined(__MACH__)))
+ #include <unistd.h>
+ #include <sys/times.h>
+ #define real_time(tv) do {                                                  \
