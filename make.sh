@@ -129,7 +129,9 @@ if [ -n "$QTPKG" ]; then
     done
 
     "$MOC" qtmain.cpp -o qtmain.moc
-    $CXX -g -fPIC $(pkg-config --cflags $QTPKG) -c qtmain.cpp -o $OBJDIR/qtmain.o
+    # Qt6 requires C++17 and Qt5 is happy with it; gcc defaults to gnu++17
+    # but apple clang does not, so say it explicitly
+    $CXX -g -fPIC -std=c++17 $(pkg-config --cflags $QTPKG) -c qtmain.cpp -o $OBJDIR/qtmain.o
     $CXX -o imageqt $OBJDIR/*.o $LIBS $(pkg-config --libs $QTPKG)
 else
     echo "skipping imageqt: no Qt5 or Qt6 found" >&2
