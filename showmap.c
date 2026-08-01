@@ -207,6 +207,43 @@ int i;
 
 }
 
+#if defined(GUI) || defined(QTGUI)
+/* Left button handling for the vertical cross section, factored out of the
+ * X11 event loop so the Qt front end can drive it too.  First click marks
+ * the start, the second draws the section, and a click while one is on
+ * screen puts the map back.  The caller must have fed the current cursor
+ * position to mouse_move() first: xck/yck/xco/yco come from there. */
+void cross_section_click(void)
+{
+   char thresh_file[100];
+
+   if (flagl == 0) {
+      if (flagv == 1) {                 /* a section is showing: restore */
+         read_files(cur_file,0);
+         draw_map(1);
+         flagv = 0;
+         flagl = 0;
+         return;
+      }
+      draw_map(1);
+      xc1 = xck; yc1 = yck;
+      xco1 = xco/2; yco1 = yco/2;
+      flagl = 1;                        /* start point taken */
+   } else {
+      xc2 = xck; yc2 = yck;
+      xco2 = xco/2; yco2 = yco/2;
+      sprintf(thresh_file,"%s/thresh.z",grfdir);
+      color_level(thresh_file);
+      outtextxy(LBP,UBP,maps[4].descr);
+      vert(xco1,yco1,xco2,yco2);
+      flagl = 0;
+   }
+}
+
+/* 0 = idle, 1 = waiting for the second point, so the front end can say so */
+int cross_section_state(void) { return flagl; }
+#endif
+
 int init_graph(char *palette_file) {
 int i;
 int svga;

@@ -104,12 +104,14 @@ if [ -n "$QTPKG" ]; then
     QTCORE=${QTPKG%Widgets}Core
     # moc lives in host_bins for Qt5 and in libexec for Qt6, and neither
     # variable is reliably set, so try the usual places in turn
-    MOC=
-    for cand in \
+    MOC=${MOC:-}
+    for cand in "$MOC" \
         "$(pkg-config --variable=host_bins  $QTCORE 2>/dev/null)/moc" \
         "$(pkg-config --variable=libexecdir $QTCORE 2>/dev/null)/moc" \
         "$(pkg-config --variable=prefix $QTCORE 2>/dev/null)/share/${QTCORE%Core}/bin/moc" \
+        "$(pkg-config --variable=prefix $QTCORE 2>/dev/null)/share/qt/libexec/moc" \
         /usr/lib/qt6/libexec/moc moc-qt6 moc6 moc; do
+        [ -z "$cand" ] && continue
         [ -x "$cand" ] && MOC=$cand && break
         command -v "$cand" >/dev/null 2>&1 && MOC=$cand && break
     done

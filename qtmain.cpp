@@ -222,6 +222,7 @@ signals:
     void quitRequested();
     void waitStateChanged(bool waiting);
     void surfaceChanged();
+    void crossSectionChanged(int waitingForSecondPoint);
 
 protected:
     /* The archive browser and the animation both read keys themselves, and
@@ -271,11 +272,21 @@ protected:
 
     void mousePressEvent(QMouseEvent *event) override
     {
-        /* the core calls this one mouse_click_left, but the event loop only
-         * ever fed it right button presses - keep that behaviour */
-        if (event->button() == Qt::RightButton) {
-            mouse_click_left(eventPos(event).x() + mapRegion.x(),
-                             eventPos(event).y() + mapRegion.y());
+        const int x = eventPos(event).x() + mapRegion.x();
+        const int y = eventPos(event).y() + mapRegion.y();
+
+        /* the cross section reads the cursor position from the globals
+         * mouse_move() maintains, so make sure they match this click */
+        mouse_move(x, y);
+
+        if (event->button() == Qt::LeftButton) {
+            cross_section_click();
+            emit crossSectionChanged(cross_section_state());
+            refresh();
+        } else if (event->button() == Qt::RightButton) {
+            /* the core calls this one mouse_click_left, but the X11 loop
+             * only ever fed it right button presses - keep that behaviour */
+            mouse_click_left(x, y);
             refresh();
         }
         setFocus();
@@ -401,6 +412,14 @@ public:
                                "(the Archive keys buttons do the same)"));
                     else
                         statusBar()->clearMessage();
+                });
+        connect(canvas, &MapCanvas::crossSectionChanged, this,
+                [this](int waiting) {
+                    statusBar()->showMessage(waiting
+                        ? tr("Cross section: click the second point")
+                        : tr("Left click picks two points for a vertical "
+                             "cross section; click again to restore the map"),
+                        waiting ? 0 : 4000);
                 });
         connect(canvas, &MapCanvas::positionChanged, this,
                 [this](int x, int y) {

@@ -1,0 +1,100 @@
+name: macos
+
+# macOS build.  Nothing here was tried before committing - there is no Mac on
+# the development machine - so treat the first run as the real test.
+#
+# Only gen-bitmap and imageqt are expected to matter:
+#   gen-bitmap  renders into RAM frame contexts, no video driver at all
+#   imageqt     drives GRX's "memory" driver and lets Qt do the display
+# imagegcc needs a real X11 display to run, but it still links here because
+# the X11 libraries come from Homebrew, so it is built and shipped anyway.
+#
+# GRX has no macOS makefile; makefile.x11 is used with the X11 paths pointed
+# at Homebrew rather than the /usr that patch 01 sets for Linux.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  clang-macos:
+    # macos-latest is Apple silicon; add macos-13 to the matrix for intel
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the build dependencies
+        run: |
+          brew update -q
+          brew install pkg-config libpng proj minizip qt libx11 libxext
+
+      - name: Point the toolchain at Homebrew
+        run: |
+          BREW=$(brew --prefix)
+          echo "CPATH=$BREW/include"                  >> $GITHUB_ENV
+          echo "LIBRARY_PATH=$BREW/lib"               >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$BREW/lib/pkgconfig:$(brew --prefix qt)/lib/pkgconfig" >> $GITHUB_ENV
+          echo "MOC=$(brew --prefix qt)/share/qt/libexec/moc" >> $GITHUB_ENV
+          echo "BREW=$BREW" >> $GITHUB_ENV
+
+      - name: Provide the GRX sources
+        env:
+          GRX_URL: ${{ vars.GRX_URL || 'http://grx.gnu.de/download/grx249.tar.gz' }}
+          GRX_SHA256: ${{ vars.GRX_SHA256 || 'a899956b3ee46492696114d220431405320c64c1f6f058fdfc2b4d6a2beae786' }}
+        run: |
+          set -e
+          if [ -d third_party/grx249 ]; then
+            cp -r third_party/grx249 grx-build
+          else
+            curl -fL "$GRX_URL" -o grx-src.tar.gz
+            # macOS has shasum, not sha256sum
+            echo "$GRX_SHA256  grx-src.tar.gz" | shasum -a 256 -c -
+            mkdir grx-build
+            tar xzf grx-src.tar.gz -C grx-build --strip-components=1
+          fi
+          test -f grx-build/makedefs.grx
+
+      - name: Apply the GRX patches
+        run: |
+          set -e
+          for p in grx-patches/*.patch; do
+            echo "applying $p"
+            patch -N -p1 -d grx-build < "$p"
+          done
+
+      # X11BASE is /usr on linux; on macOS the headers live under Homebrew.
+      # -m64 is already skipped: patch 01 only emits it when uname -m is x86.
+      - name: Build GRX
+        run: |
+          make -C grx-build -f makefile.x11 libs \
+            X11INCS="-I$BREW/include" \
+            X11LIBS="-L$BREW/lib -lX11"
+
+      - name: Build the tools
+        run: GRX=grx-build ./make.sh
+
+      - name: Run the GRX probes
+        run: cd tests && GRX=../grx-build ./run-tests.sh
+
+      - name: Collect the bundle
+        run: |
+          set -e
+          mkdir -p dist
+          for b in gen-bitmap imagegcc imageqt; do
+            [ -f "$b" ] && cp "$b" dist/
+          done
+          cp -r config paths dist/ 2>/dev/null || true
+          # these link against Homebrew dylibs, so they are not standalone;
+          # otool -L records what a user would need installed
+          for b in dist/*; do
+            [ -f "$b" ] && [ -x "$b" ] && { echo "== $b"; otool -L "$b" | head -12; }
+          done
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imagegcc-macos-${{ runner.arch }}
+          path: dist
+          if-no-files-found: error

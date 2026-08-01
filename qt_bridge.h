@@ -50,6 +50,10 @@ int  qt_map_bpp(void);
 void qt_dump_surfaces(void);
 
 /* where the fixed panes live on the surface (defined in showmap.c/showdata.c) */
+/* vertical cross section, driven by the left mouse button (showmap.c) */
+void cross_section_click(void);
+int  cross_section_state(void);
+
 void qt_legend_rect(int *x,int *y,int *w,int *h);
 void qt_readout_rect(int *x,int *y,int *w,int *h);
 
