@@ -1,0 +1,14 @@
+--- a/include/grx20.h
++++ b/include/grx20.h
+@@ -109,7 +109,10 @@
+ #endif /* _MSC_VER */
+ 
+ #ifndef GRX_VERSION
+-#if defined(unix) || defined(__unix) || defined(__unix__) || defined(_AIX)
++/* darwin defines neither unix nor __unix__, so macOS fell through to the
++ * #error below and every later "far" went undeclared with it */
++#if defined(unix) || defined(__unix) || defined(__unix__) || defined(_AIX) \
++ || (defined(__APPLE__) && defined(__MACH__))
+ #define GRX_VERSION     GRX_VERSION_GENERIC_X11
+ #endif
+ #endif
