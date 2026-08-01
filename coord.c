@@ -3,9 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "image.h"
-//#ifdef __TURBOC__
-# include <malloc.h>
-//#endif
+#ifdef __TURBOC__
+# include <malloc.h>    /* for farmalloc; stdlib.h above covers malloc,
+                           and darwin has no <malloc.h> at all */
+#endif
 #include "proj_compat.h"
 
 #define MaxPortTables MaxPorts
