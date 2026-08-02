@@ -28,6 +28,7 @@
 #include <QCloseEvent>
 #include <QScrollBar>
 #include <QScreen>
+#include <QLayout>
 #include <QResizeEvent>
 
 #include <clocale>
@@ -75,9 +76,17 @@ public:
     void setRegion(const QRect &r)
     {
         region = r;
-        setFixedSize(r.size());
+        /* Fixed width, but the height is a preference, not a demand: these
+         * used to be setFixedSize(), which made the window taller than some
+         * screens and left the compositor unable to maximise it. */
+        setFixedWidth(r.width());
+        setMinimumHeight(0);
+        setMaximumHeight(r.height());
+        updateGeometry();
         update();
     }
+
+    QSize sizeHint() const override { return region.size(); }
 
 protected:
     void paintEvent(QPaintEvent *) override
@@ -402,9 +411,22 @@ public:
         qt_readout_rect(&x, &y, &w, &h);
         readout->setRegion(QRect(x, y, w, h));
 
+        /* The buttons are what used to make the window 1069 pixels tall at
+         * the very least - more than the work area on a good many screens,
+         * and a window that cannot be made to fit cannot be maximised
+         * either.  Let the column scroll instead of dictating a minimum. */
+        QWidget *panel = buildPanel();
+        QScrollArea *panelScroll = new QScrollArea;
+        panelScroll->setWidget(panel);
+        panelScroll->setWidgetResizable(true);
+        panelScroll->setFrameShape(QFrame::NoFrame);
+        panelScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        panelScroll->setFixedWidth(panel->sizeHint().width()
+                                   + panelScroll->verticalScrollBar()->sizeHint().width());
+
         QWidget *central = new QWidget;
         QHBoxLayout *layout = new QHBoxLayout(central);
-        layout->addWidget(buildPanel());
+        layout->addWidget(panelScroll);
         layout->addWidget(legend,  0, Qt::AlignTop);
         layout->addWidget(mapScroll, 1);
         layout->addWidget(readout, 0, Qt::AlignTop);
