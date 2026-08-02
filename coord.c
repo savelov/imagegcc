@@ -481,15 +481,50 @@ if ((*tb==nodata && l<Rsv && x!=-1 && y!=-1)||(*tb!=nodata && x!=-1 && y!=-1)) {
 
 /* Fill a hole whose four neighbours all have readings.  "Hole" is the
  * product's own no-data byte, which is not 254 for every product. */
-void interpolation (unsigned char *ntb,int map_size,int nodata) {
-int i,j;
+/* Fill the single cell holes the reprojection leaves behind, from the four
+ * neighbours - but only from the ones that actually measured something.
+ *
+ * "No echo" is an absence, not a reading, and averaging it in invented data.
+ * It shows worst in differential reflectivity, whose byte scale is not
+ * monotonic: 123 and above mean -0.4..3.5 dB, while 121 and below mean
+ * 3.6..12.2 dB.  Mixing the no-echo byte 0 into three ordinary readings of
+ * 132 (0.5 dB) gives (132*3+0+2)/4 = 99, which reads back as 10.0 dB - a
+ * scatter of ">5 dB" cells through otherwise quiet weather.
+ *
+ * `smooth` is 0 for a product whose bytes are codes rather than quantities.
+ * Averaging those invents phenomena that were never observed - halfway
+ * between a heavy shower and light rain is not a thing - so such a hole takes
+ * the commonest of its neighbours instead, ties going to the stronger code,
+ * which is how these maps already combine across radars. */
+void interpolation (unsigned char *ntb,int map_size,int nodata,int noecho,int smooth) {
+int i,j,k,n,sum;
 unsigned char *Ptr;
+int v[4];
 
  for (i=1;i<map_size-1;i++)
 	for (j=1; j<map_size-1;j++) {
 	  Ptr=ntb+(long)i*map_size+j;
-	  if (*Ptr==nodata && *(Ptr-1)!=nodata && *(Ptr+1)!=nodata && *(Ptr-map_size)!=nodata && *(Ptr+map_size)!=nodata)
-	 *Ptr=(*(Ptr-1)+*(Ptr+1)+*(Ptr-map_size)+*(Ptr+map_size)+2)/4;
+	  if (*Ptr!=nodata) continue;
+	  v[0]=*(Ptr-1); v[1]=*(Ptr+1); v[2]=*(Ptr-map_size); v[3]=*(Ptr+map_size);
+	  for (k=0;k<4;k++) if (v[k]==nodata) break;
+	  if (k<4) continue;                /* a neighbour is a hole as well */
+	  if (!smooth) {                    /* codes: the commonest neighbour */
+	     int best=v[0],bestn=0,m,c;
+	     for (k=0;k<4;k++) {
+	        for (c=0,m=0;m<4;m++) if (v[m]==v[k]) c++;
+	        if (c>bestn || (c==bestn && v[k]>best)) { best=v[k]; bestn=c; }
+	     }
+	     *Ptr=best;
+	     continue;
+	  }
+	  sum=n=0;
+	  for (k=0;k<4;k++) {
+	     if (noecho>=0 && v[k]==noecho) continue;
+	     sum+=v[k]; n++;
+	  }
+	  /* nothing around it saw anything, so neither did this cell */
+	  if (n==0) { if (noecho>=0) *Ptr=noecho; continue; }
+	  *Ptr=(sum+n/2)/n;
  }
 }
 
