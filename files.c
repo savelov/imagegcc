@@ -555,7 +555,8 @@ flags=0;
 
 	for (i=0; i<no_maps; i++)
 	   if (maps[i].mapres!=0 && maps[i].bufdata)
-	      interpolation(maps[i].bufdata,MSIZE_int,maps[i].nodata);
+	      interpolation(maps[i].bufdata,MSIZE_int,maps[i].nodata,
+	                    maps[i].noecho,maps[i].family!=FAM_PHENOM);
 
         set_cur_map(maps[current_map].mapid);
 
