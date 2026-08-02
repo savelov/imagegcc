@@ -23,19 +23,28 @@ int yc1=240;
 #define DEBUG
 extern long colors[NUM_COLORS];
 
+/* Only the animation reads the keyboard from inside draw_map(); see the note
+ * on the poll at the end of draw_map() for why it must not happen otherwise. */
+int anim_running=0;
+int anim_stopped=0;      /* the last animation ended on a space, not at the end */
+
 int animate (int begin,int end) {
 int i;
 int key;
+
+anim_running=1;
+anim_stopped=0;
 
 for (i=begin; i<end; i++) {
    read_files(i,1);
    key=draw_map(1);
    showtime();
-  if (key==' ') break;
+  if (key==' ') { anim_stopped=1; break; }
 
   select_product(key);   /* the product keys work mid animation too */
  }
 
+ anim_running=0;
  return i;
 
 }
@@ -287,6 +296,12 @@ int max_down=MSIZE/2-WINDOW_YSIZE/MPIX/2-1;
                 case ' ': if (cur_file<FilesRead-1) {
                                  cur_file=animate(cur_file,FilesRead-1);
                                  read_files(cur_file,0);
+                                 /* Stopped by the user: animate() has already
+                                  * left this very frame on screen, so the
+                                  * repaint below would only redraw what is
+                                  * there.  Run to the end and it has not -
+                                  * the last frame drawn was cur_file-1. */
+                                 if (anim_stopped) return 0;
 		 } else return 0; break;
 		case '/':  cur_file=0;
 		 read_files(cur_file,0);

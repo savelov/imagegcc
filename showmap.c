@@ -412,10 +412,15 @@ GrBox(WINDOW_LEFT-1,WINDOW_UP-1,WINDOW_LEFT+WINDOW_XSIZE,WINDOW_UP+WINDOW_YSIZE,
 
 show_header();
 #if defined(QTGUI)
-/* lets animate() repaint and stay interruptible: space stops it */
-return qt_poll_key();
+/* Lets animate() repaint and stay interruptible: space stops it.  Only while
+ * it is running, though - polling here consumes a pending keypress and every
+ * caller but animate() throws the result away, so a key struck during any
+ * other repaint was simply lost.  The reload after an animation stops is slow
+ * enough to swallow the next space that way.  message_poll() also drags the
+ * cursor readout along with it, which is a repaint nobody asked for. */
+return anim_running ? qt_poll_key() : 0;
 #elif defined(GUI)
-return message_poll();
+return anim_running ? message_poll() : 0;
 #else
 return 0;
 #endif

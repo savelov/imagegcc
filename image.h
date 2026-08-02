@@ -250,6 +250,7 @@ int GetWindowKey(void);
 
 extern int archive(void);
 extern int anim_begin,anim_end;
+extern int anim_running,anim_stopped;
 
 #define CharXSize 8
 #define CharYSize 16
