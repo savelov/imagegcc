@@ -70,6 +70,51 @@ void qt_dump_surfaces(void);
 /* vertical cross section, driven by the left mouse button (showmap.c) */
 void cross_section_click(void);
 int  cross_section_state(void);
+void cross_section_endpoints(int *x1,int *y1,int *x2,int *y2);
+void cross_section_forget(void);
+
+/* ------------------------------------------------------------------ */
+/* the interpolated cross section (crosssect.c)                        */
+/* ------------------------------------------------------------------ */
+
+/* A slice through the stacked constant altitude products, interpolated in
+ * three dimensions.  The values are physical - dBZ, dB, m/s - on the same
+ * scales the cursor readout prints, so a point read off the section and off
+ * the map give one answer.  Samples with nothing in them carry CS_NODATA. */
+#define CS_NODATA (-9999.0f)
+
+struct cross_section {
+   int    width;       /* samples along the line */
+   int    height;      /* samples up the vertical */
+   float  length_km;   /* what width spans */
+   float  top_km;      /* what height spans: the highest level */
+   float  base_km;     /* the lowest level; nothing below it is invented */
+   int    family;      /* QT_FAM_*, what the values are */
+   int    levels;      /* source levels that went into it */
+   int    smooth;      /* interpolated, rather than nearest sample */
+   float *value;       /* width*height, row 0 at the ground, column 0 at x1 */
+   float *floor_km;    /* width, the lowest altitude the beam reaches */
+   float *level_km;    /* levels, the altitudes the data actually sits at */
+};
+
+int  cross_section_compute(int x1,int y1,int x2,int y2,int family,int smooth,
+                           struct cross_section *cs);
+void cross_section_release(struct cross_section *cs);
+
+/* what can be cut through: families with two levels or more, most useful
+ * first.  Returns how many were written. */
+int  cross_section_families(int *families,int max);
+int  cross_section_levels(int family);
+
+/* colouring, so the front end need not know how a product is encoded.
+ * `rgb` is 256*3 bytes; the legend is one row per call, strongest first, and
+ * returns 0 once there are no more.  Labels and titles are cp866. */
+int  cross_section_byte(int family,float value);
+int  cross_section_colors(int family,unsigned char *rgb);
+int  cross_section_legend(int family,int row,unsigned char *rgb,
+                          char *label,int size);
+const char *cross_section_units(int family);
+const char *cross_section_title(int family);
 
 void qt_legend_rect(int *x,int *y,int *w,int *h);
 void qt_readout_rect(int *x,int *y,int *w,int *h);

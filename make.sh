@@ -50,7 +50,7 @@ fi
 CFLAGS="-g -std=gnu89 $PERMISSIVE -fcommon"
 
 SRC="image.c showmap.c coord.c showdata.c files.c grafs.c archive.c window.c
-     vert.c palette.c compat.c proj_compat.c"
+     vert.c crosssect.c palette.c compat.c proj_compat.c"
 
 # PROJ: use the development package when it is installed, otherwise link the
 # runtime library directly (proj_compat.c declares what it needs).
