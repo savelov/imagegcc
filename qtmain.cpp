@@ -27,6 +27,8 @@
 #include <QEventLoop>
 #include <QCloseEvent>
 #include <QScrollBar>
+#include <QScreen>
+#include <QResizeEvent>
 
 #include <clocale>
 
@@ -106,6 +108,10 @@ public:
     {
         setMouseTracking(true);          /* mouse_move() wants every motion */
         setFocusPolicy(Qt::StrongFocus); /* keep the original key bindings  */
+        /* grow with the window: the map is resized to match, rather than
+         * being a fixed picture with empty scroll area around it */
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setMinimumSize(320, 240);
         qApp->installEventFilter(this);  /* see eventFilter() below         */
         rebuildImage();
     }
@@ -143,7 +149,7 @@ public:
         /* draw_map() is also called from timer() and from inside the event
          * handling below, so never pump events recursively: a nested poll
          * would eat the key the outer animate() is waiting for. */
-        if (animating) return 0;
+        if (animating || suppressPoll) return 0;
 
         refresh();
         animating = true;
@@ -189,7 +195,6 @@ public:
             mapRegion = QRect(qt_map_origin_x(), qt_map_origin_y(),
                               qt_map_width(), qt_map_height());
             mapRegion &= QRect(0, 0, w, h);
-            setFixedSize(mapRegion.size());
         }
 
         unsigned char *map = qt_map_pixels();
@@ -223,6 +228,7 @@ signals:
     void waitStateChanged(bool waiting);
     void surfaceChanged();
     void crossSectionChanged(int waitingForSecondPoint);
+    void mapResized();
 
 protected:
     /* The archive browser and the animation both read keys themselves, and
@@ -292,6 +298,22 @@ protected:
         setFocus();
     }
 
+    /* Give the core a map buffer the size of this widget and repaint into it.
+     * draw_map() ends in qt_poll_key(), which pumps the event loop; doing that
+     * from inside a resize re-enters this handler, so hold it off. */
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        if (!qt_resize_map(width(), height())) return;
+        rebuildImage();
+        suppressPoll = true;
+        draw_map(1);
+        qt_redraw_readout();
+        suppressPoll = false;
+        emit mapResized();
+        refresh();
+    }
+
     /* keys are handled in eventFilter(), so that they work no matter which
      * widget holds the focus - the canvas never has to be clicked first */
 
@@ -327,6 +349,7 @@ private:
 
     bool        waiting = false;   /* inside waitForKey() */
     bool        animating = false; /* inside pollKey()    */
+    bool        suppressPoll = false; /* inside resizeEvent() */
     int         pendingKey = -1;
     int         polledKey = 0;
     QEventLoop *keyLoop = nullptr;
@@ -362,6 +385,7 @@ public:
         g_canvas = canvas;
 
         mapScroll = new QScrollArea;
+        mapScroll->setWidgetResizable(true);   /* the canvas follows the viewport */
         mapScroll->setWidget(canvas);
         mapScroll->setAlignment(Qt::AlignCenter);
         mapScroll->setBackgroundRole(QPalette::Dark);
@@ -391,6 +415,13 @@ public:
                 QOverload<>::of(&QWidget::update));
         connect(canvas, &MapCanvas::surfaceChanged, readout,
                 QOverload<>::of(&QWidget::update));
+
+        connect(canvas, &MapCanvas::mapResized, this, [this]() {
+            /* qt_readout_rect() is WINDOW_LEFT+WINDOW_XSIZE, which just moved */
+            int x, y, w, h;
+            qt_readout_rect(&x, &y, &w, &h);
+            readout->setRegion(QRect(x, y, w, h));
+        });
 
         connect(canvas, &MapCanvas::quitRequested, this, &QWidget::close);
         connect(canvas, &MapCanvas::waitStateChanged, this,
@@ -617,6 +648,14 @@ int main(int argc, char *argv[])
      * decimal point wherever the locale uses a comma - MPIX becomes 0 and
      * the map ends up blank.  Numbers stay in the C locale. */
     setlocale(LC_NUMERIC, "C");
+
+    /* The surface is allocated once, inside image_init(), and caps how large
+     * the map can ever be - so make it the size of the display rather than the
+     * 1920x1080 that used to be compiled in. */
+    if (QScreen *screen = app.primaryScreen()) {
+        const QSize px = screen->geometry().size() * screen->devicePixelRatio();
+        qt_set_screen_size(px.width(), px.height());
+    }
 
     /* read the config, load the newest files and render the first frame */
     if (image_init(argc, argv) != 0) return 1;

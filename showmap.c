@@ -28,7 +28,6 @@ GrTextOption TextStyle;
 GrTextOption TextStyle1;
 GrFont *LabelFont=NULL;   /* cp866 font for the map labels */
 GrContext *RamContext;
-GrContext * SubContext;
 
 long colors[NUM_COLORS];
 
@@ -104,6 +103,42 @@ fclose (dan);
 void qt_legend_rect(int *x,int *y,int *w,int *h)
 {
    palette_rect(x,y,w,h);
+}
+
+/* Fit the map to the canvas.  The canvas used to be nailed to the size
+ * image.cfg asked for, so maximising the window only added empty scroll area
+ * around a map that never grew.  The surface is the hard limit, and the
+ * readout column has to keep its place to the right of the map. */
+int qt_resize_map(int w,int h)
+{
+   int rx,ry,rw,rh;
+   int maxw,maxh;
+
+   qt_readout_rect(&rx,&ry,&rw,&rh);
+   maxw=qt_surface_width()-WINDOW_LEFT-rw;
+   maxh=qt_surface_height()-WINDOW_UP;
+
+   if (w>maxw) w=maxw;
+   if (h>maxh) h=maxh;
+   if (w<MIN_MAP_SIZE) w=MIN_MAP_SIZE;
+   if (h<MIN_MAP_SIZE) h=MIN_MAP_SIZE;
+   if (w==WINDOW_XSIZE && h==WINDOW_YSIZE) return 0;
+
+   WINDOW_XSIZE=w;
+   WINDOW_YSIZE=h;
+   /* The surface keeps whatever the previous, differently sized panes left on
+    * it - a shrinking map leaves its old right hand edge behind, exactly where
+    * the readout column now has to go.  Start from a clean sheet; draw_map()
+    * and the readout repaint everything that belongs on it. */
+   GrClearContext(colors[0]);
+   if (RamContext!=NULL) GrDestroyContext(RamContext);
+   RamContext=GrCreateFrameContext(GR_frameRAM24,WINDOW_XSIZE,WINDOW_YSIZE,NULL,NULL);
+   if (RamContext==NULL) {
+      fprintf(logfile,"Can't allocate a %dx%d map buffer\n",WINDOW_XSIZE,WINDOW_YSIZE);
+      exit(1);
+   }
+   update_coords();          /* the pan limits are in units of window size */
+   return 1;
 }
 #endif /* QTGUI */
 
@@ -185,9 +220,9 @@ GrContext * context;
       exit(1);
    }
    if (!GrSetMode(GR_width_height_color_graphics,
-                  QT_SCREEN_XSIZE,QT_SCREEN_YSIZE,256*256*256L)) {
+                  qt_surface_width(),qt_surface_height(),256*256*256L)) {
       fprintf(logfile,"Can't set a %dx%d truecolor memory mode\n",
-              QT_SCREEN_XSIZE,QT_SCREEN_YSIZE);
+              qt_surface_width(),qt_surface_height());
       exit(1);
    }
    qt_set_screen_context(GrScreenContext());
@@ -243,11 +278,16 @@ GrContext * context;
    TextStyle1.txo_direct    = GR_TEXT_RIGHT;
    TextStyle1.txo_fgcolor.v = colors[15];
    TextStyle1.txo_bgcolor.v = GrOR;
-#if defined(GUI) || defined(QTGUI)
-   RamContext=GrCreateFrameContext(GR_frameRAM24,WINDOW_XSIZE,WINDOW_YSIZE,NULL,NULL);
-   SubContext=GrCreateSubContext(WINDOW_LEFT,WINDOW_UP,
-     WINDOW_LEFT+WINDOW_XSIZE,WINDOW_UP+WINDOW_YSIZE,NULL,NULL);
-
+#if defined(GUI)
+   /* The map is drawn into RAM and blitted to the window.  GrBitBltNC() only
+    * has a transfer routine when the source frame mode is the one the screen
+    * driver names as its compatible RAM mode - otherwise it falls off the end
+    * of its if/else and returns, drawing nothing at all.  GR_frameRAM24 is
+    * that mode only on a 24 bit X visual; a depth 24 screen actually gives
+    * XWIN32L/RAM32L and a depth 16 one XWIN16/RAM16, which is why blitting
+    * appeared not to work here and got replaced by a PNG round trip through
+    * /tmp.  Ask the driver instead of guessing. */
+   RamContext=GrCreateFrameContext(GrCoreFrameMode(),WINDOW_XSIZE,WINDOW_YSIZE,NULL,NULL);
 #else
    RamContext=GrCreateFrameContext(GR_frameRAM24,WINDOW_XSIZE,WINDOW_YSIZE,NULL,NULL);
 #endif
@@ -362,14 +402,8 @@ if (vectors) show_vectors();
 #if defined(QTGUI)
 qt_compose_map();   // put the map on the screen surface Qt shows
 #elif defined(GUI)
-// copy RAM to screen
-
-GrSaveContextToPng(RamContext,"/tmp/output.png"); 
-GrLoadContextFromPng(SubContext,"/tmp/output.png",0);
-
-//GrBitBlt (&ScreenContext,WINDOW_LEFT,WINDOW_UP,RamContext,0,0,WINDOW_XSIZE-1,WINDOW_YSIZE-1,GrWRITE);
-//GrImage* img_local = GrImageFromContext(RamContext);
-//GrImageDisplay(WINDOW_LEFT,WINDOW_UP, img_local);
+GrBitBlt(&ScreenContext,WINDOW_LEFT,WINDOW_UP,
+         RamContext,0,0,WINDOW_XSIZE-1,WINDOW_YSIZE-1,GrWRITE);
 #endif
 
 GrSetContext(&ScreenContext);

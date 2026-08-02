@@ -211,6 +211,14 @@ char s[80];
 
 #ifdef QTGUI
 /* Likewise for the cursor readout column down the right hand side. */
+/* Repaint the readout where it now lives.  It is normally drawn only as the
+ * cursor moves, so after a resize the column would stay blank until the mouse
+ * happened to cross the map. */
+void qt_redraw_readout(void)
+{
+   showdata(xco,yco);
+}
+
 void qt_readout_rect(int *x,int *y,int *w,int *h)
 {
    *x = WINDOW_LEFT + WINDOW_XSIZE;

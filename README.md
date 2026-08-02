@@ -216,6 +216,44 @@ with those three lines correct mean patch 2 is missing.
 saves a picture of the window and exits, for checking a remote machine
 without a display.
 
+Neither front end needs a real screen to be checked: Xephyr gives a nested
+one, and imageqt must be told to use it, because the Qt plugin otherwise
+picks Wayland and ignores DISPLAY entirely.
+
+    Xephyr :77 -screen 1920x1080x24 &
+    DISPLAY=:77 ./imagegcc
+    DISPLAY=:77 ./imageqt -platform xcb
+    DISPLAY=:77 import -window root shot.png
+
+================================================================================
+GrBitBlt and frame modes
+================================================================================
+
+The map is drawn into a RAM context and copied to the window in one go.  Two
+things about GrBitBlt() are worth knowing before touching that code.
+
+GrBitBltNC() picks its transfer routine from the frame modes of the two
+contexts, and its if/else chain ends in a bare `else return;` - so a pair it
+has no routine for is not an error, it simply draws nothing.  A source is
+usable only when its frame mode is the one the screen driver names as its
+compatible RAM mode.  That is *not* GR_frameRAM24 on a normal X server:
+
+    X visual depth 24  ->  GR_frameXWIN32L, compatible RAM mode RAM32L
+    X visual depth 16  ->  GR_frameXWIN16,  compatible RAM mode RAM16
+
+so a hardcoded RAM24 source silently copies nothing on both.  imagegcc used
+to work around that by writing the map to /tmp/output.png with
+GrSaveContextToPng() and reading it back with GrLoadContextFromPng() - 130 ms
+per frame at 1500x1100, against 6 ms for the blit.  Ask the driver instead:
+
+    RamContext = GrCreateFrameContext(GrCoreFrameMode(), ...);
+
+GrCoreFrameMode() is the screen driver's rmode, so the pair always matches.
+Note that it is meaningful only under a real video driver - the memory driver
+leaves rmode at GR_frameUndef, which is why imageqt and gen-bitmap still name
+GR_frameRAM24 explicitly.  They never blit to a screen; they read the surface
+back directly.
+
 ================================================================================
 Building for Windows
 ================================================================================

@@ -164,6 +164,8 @@ extern int current_color;
 
 extern int WINDOW_XSIZE,WINDOW_YSIZE,WINDOW_LEFT,WINDOW_UP;
 
+#define MIN_MAP_SIZE 200   /* smallest sensible map area, in pixels */
+extern void update_coords(void);
 extern void message_loop(void);
 extern int message_poll(void);
 extern int init_graph(char *palette_file);
