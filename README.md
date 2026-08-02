@@ -4,6 +4,120 @@ bufr2wrk.py - script to process BUFR files
 requires archive with zip files portN/YYMMDDHH.MMm
 
 ================================================================================
+Products and palettes
+================================================================================
+
+Every map file bufr2wrk.py writes can be displayed:
+
+    4_dbz_0.wrk        maximum reflectivity, and the rain rate derived from it
+    4_dbz_1..15.wrk    reflectivity, constant altitude levels 1 to 15
+    4_dif_1..10.wrk    differential reflectivity (ZDR)
+    4_vel_1..10.wrk    radial (Doppler) velocity
+    4_heigh.wrk        echo top height
+    4_myavl.wrk        phenomena
+    1..5_summ.wrk      rainfall over 1, 3, 6, 12 and 24 hours
+
+Phenomena come from 4_myavl.wrk rather than 4_storm.wrk.  The two hold the same
+field in different codings: myavl stores the phenomenon code itself (0 to 19),
+which is what the palette is keyed on, while storm.wrk carries the older
+0/3/5/../60 severity scale.
+
+--------------------------------------------------------------------------------
+No-data bytes
+--------------------------------------------------------------------------------
+
+A point the radar has no reading for is not marked the same way in every
+product, so maps[] in files.c carries the byte per product.  These are measured
+from the archive, not assumed: take a pixel that 4_dbz_1.wrk marks 254 (so it is
+known to be outside the coverage) and see what the other products put there.
+Over 300 random archives:
+
+    4_dbz_1..15, 4_heigh, 4_myavl   254   bufr2wrk marks these itself
+    4_dif_*                         121   debufr's wrapped value table
+    4_vel_*                         255   bufr2wrk; 178 in older files, below
+    4_dbz_0 (rain rate)             221   or 164 - see below
+    N_summ                           14
+
+The last two have no marker of their own: bufr2wrk.py gives reflectivity, ZDR
+and velocity a dedicated byte, but for the rain rate and the sums a missing
+point simply saturates the top of the run length table.  Where that lands
+depends on how wide the source field is - 221 (1431 mm/h) on the DMRL radars and
+164 (93 mm/h) on the AKSOPRI ones, 184 of the 210 sampled archives.  Both are
+read as no data; 164 is folded onto 221 as the file is read, so everything after
+that has one marker to test.  The cost is the 93-97 mm/h bin of the rain rate,
+which no real echo is likely to land in and which the DMRL radars cannot produce
+at all.  Untreated, the whole out-of-range area of a map reads as a downpour -
+1467 mm/h, or 73 dBZ when the same file is shown as maximum reflectivity.
+
+Known and not handled: 4_vel_* in the older archives uses 178, which debufr
+produced by wrapping the BUFR missing value.  That is a real 25.5 m/s reading,
+so it cannot be folded away without punching holes in genuine velocity fields -
+which is exactly why bufr2wrk.py moved to a dedicated 255.  Files written by
+bufr2wrk are correct; older ones show a 25.5 m/s ring outside the coverage.
+
+Keys, since there are more products than letters:
+
+    0..9   reflectivity levels 0 to 9     r   next reflectivity level
+    p      rain rate                      d   next ZDR level
+    h      echo top height                v   next velocity level
+    s      phenomena                      q   next rainfall sum
+    [ ]    previous / next level of the family on screen
+
+gen-bitmap picks its product from the command line: `map<N>` for a reflectivity
+level (this used to be a raw index into the product table, which moved with the
+table - it is the level now, the same number the digit keys use), `zdr<N>`,
+`vel<N>`, `sum<hours>`, `top`, `phenom` or `rain`.
+
+--------------------------------------------------------------------------------
+Colours
+--------------------------------------------------------------------------------
+
+Colours come from the pycao palettes - the same ones the web side serves, see
+cao/palettes and geotiff.py.  mkpalettes.py walks the 256 possible .wrk bytes
+per product, converts each to a physical value with the cao.conversion function
+that byte scale belongs to, looks the value up in the pycao palette and writes
+the result to config/palettes/<product>.pal: a 256 entry colour table plus the
+legend, in CP866 like every other text file here.
+
+    ./mkpalettes.py [--pycao ../pycao_numba] [--out config/palettes]
+
+It needs the cao package, but not numba - it shims the decorators cao.conversion
+uses.  The .pal files are committed, so a build machine needs neither.
+
+The program reads them at run time; Python stays the only definition of the
+colours.  To change a palette, change it in pycao and regenerate.
+
+config/palette is still read, for the sixteen user interface colours - frames,
+text, cursor, background.  It is no longer a limit on anything the map shows.
+
+Two of those sixteen are a matched pair, and the whole program depends on it:
+
+    entry 0    paper - panel backgrounds, window fills, the cross section
+    entry 15   ink   - all text, frames, axes, the cursor, motion vectors,
+                       and the default colour of the graf.k* overlays
+
+The overlays are drawn in it too: graf.k2 opens with `COL 15` for the city
+names and the region borders, and draw_tlo() starts every pass at 15 - its
+comment has always called that "white".  It was black, because the map's own
+no-data used to be the light grey of entry 0 and black ink read well on it.
+The palettes make no-data black, so the pair is the other way round now: entry
+0 is black and entry 15 is white.  Change them together or the overlays, the
+legend or the archive browser go dark on dark.
+config/porog.* are no longer read at all: they fed the old fifteen level
+config/thresh.* tables, which the palettes replace.
+
+--------------------------------------------------------------------------------
+The 16 colour limit, and where it was
+--------------------------------------------------------------------------------
+
+gen-bitmap used to draw into a bare RAM8 frame context with no GrSetMode call.
+GRX then leaves its colour table at the sixteen entries it starts life with and
+GrAllocColor gives up after those, so the batch renderer really did have only
+sixteen colours to draw with.  It takes the same route imageqt does now - the
+memory driver in a truecolor mode - which also means GRX patch 3 below is needed
+for gen-bitmap and not only for imageqt.
+
+================================================================================
 GRX 2.4.9 patches (2026 port to modern Linux)
 ================================================================================
 
@@ -63,7 +177,7 @@ x86_64 was already in the list, so this patch changes nothing there.  The
 extra __SIZEOF_LONG__ test covers riscv64, ppc64, s390x and the rest.
 
 --------------------------------------------------------------------------------
-3. src/vdrivers/vd_mem.c - 24bpp colour layout           needed by imageqt only
+3. src/vdrivers/vd_mem.c - 24bpp colour layout    needed by imageqt, gen-bitmap
 --------------------------------------------------------------------------------
 
     gr24ext:
@@ -77,9 +191,9 @@ for its 24bpp mode, so GrAllocColor() shifts all three components to bit 0.
     (255,0,0) and (0,0,255) both return 0x0000ff and the whole map is drawn
     in shades of blue.
 
-Only imageqt is affected: it is the sole caller of GrSetDriver("memory").
-gen-bitmap uses plain RAM frame contexts and imagegcc uses the X11 driver,
-so both are fine against a stock vd_mem.c.
+imageqt and gen-bitmap are affected: both call GrSetDriver("memory") - gen-bitmap
+does so to escape the sixteen colour default described above.  imagegcc uses the
+X11 driver and is fine against a stock vd_mem.c.
 
 --------------------------------------------------------------------------------
 Checking a build

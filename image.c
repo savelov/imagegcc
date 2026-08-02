@@ -33,27 +33,7 @@ for (i=begin; i<end; i++) {
    showtime();
   if (key==' ') break;
 
-  switch(key)  {
-                case '0':  set_cur_map(MAP_0); break;
-		case '1':  set_cur_map(MAP_1); break;
-		case '2':  set_cur_map(MAP_2); break;
-		case '3':  set_cur_map(MAP_3); break;
-		case '4':  set_cur_map(MAP_4); break;
-		case '5':  set_cur_map(MAP_5); break;
-		case '6':  set_cur_map(MAP_6); break;
-		case '7':  set_cur_map(MAP_7); break;
-		case '8':  set_cur_map(MAP_8); break;
-		case 'p':
-		case 'P':  set_cur_map(MAP_P); break;
-		case 'h':
-		case 'H':  set_cur_map(MAP_H); break;
-		case 's':
-		case 'S':  set_cur_map(MAP_S); break;
-		case 'q':
-		case 'Q':  set_cur_map(MAP_Q); break;
-
-                default : break;
-    }
+  select_product(key);   /* the product keys work mid animation too */
  }
 
  return i;
@@ -103,20 +83,10 @@ int i;
 
 void mouse_move(int x,int y) {
 
-int xcoord,ycoord;
-	  xcoord=x-WINDOW_LEFT-WINDOW_XSIZE/2;
-	  ycoord=y-WINDOW_UP-WINDOW_YSIZE/2;
-	  if (xcoord>=0) xcoord=xcoord/MPIX+1; else xcoord=xcoord/MPIX-1;
-	  if (ycoord>=0) ycoord=ycoord/MPIX+1; else ycoord=ycoord/MPIX-1;
-	  showdata(xcoord,ycoord);
-
-          if (xcoord>0) xcoord--;
-          if (ycoord>0) ycoord--;
-          xco=MSIZE/2+xcoord+x_left;
-          yco=MSIZE/2+ycoord+y_up;
-          if (xco<0) xco=0;
-          if (yco<0) yco=0;
-
+	  /* which cell was painted here - surface_to_map() and draw_map()
+	   * share one origin, so the readout cannot drift off the picture */
+	  surface_to_map(x,y,&xco,&yco);
+	  showdata(xco,yco);
 	  xck=x; yck=y;
 }
 
@@ -133,8 +103,11 @@ int flag;
 
     if (x>WINDOW_LEFT && x<(WINDOW_LEFT+WINDOW_XSIZE) &&
 	y>WINDOW_UP && y<(WINDOW_UP+WINDOW_YSIZE)) {
-          xcoord=(x-WINDOW_LEFT-WINDOW_XSIZE/2)/MPIX;
-					ycoord=(y-(WINDOW_UP)-WINDOW_YSIZE/2)/MPIX;
+                                        /* how far the clicked cell is from
+                                           the one at the centre */
+                                        surface_to_map(x,y,&xcoord,&ycoord);
+                                        xcoord-=MSIZE/2+x_left;
+                                        ycoord-=MSIZE/2+y_up;
 					flag=1;
 
 					if (x_left+xcoord<min_left) { x_left=min_left; flag=0; }
@@ -178,24 +151,84 @@ int xcoord,ycoord;
 }
 
 int mouse_click_right(int x,int y) {
-int xcoord,ycoord;
 	xc1=x;yc1=y;
-	  xcoord=x-WINDOW_LEFT-WINDOW_XSIZE/2;
-	  ycoord=y-WINDOW_UP-WINDOW_YSIZE/2;
-	  if (xcoord>=0) xcoord=xcoord/MPIX+1; else xcoord=xcoord/MPIX-1;
-	  if (ycoord>=0) ycoord=ycoord/MPIX+1; else ycoord=ycoord/MPIX-1;
-	  showdata(xcoord,ycoord);
-
-          if (xcoord>0) xcoord--;
-          if (ycoord>0) ycoord--;
-          xco=MSIZE/2+xcoord+x_left;
-          yco=MSIZE/2+ycoord+y_up;
-          if (xco<0) xco=0;
-          if (yco<0) yco=0;
-
-	  xck=x; yck=y;
+	  mouse_move(x,y);
 	  GrLine(xc1,yc1,xck,yck,colors[15]);
 	 /* return 0;*/
+	return 0;
+}
+
+/* Products are chosen by key.  There are more than forty of them now - the
+ * reflectivity, differential reflectivity and velocity levels alone account
+ * for thirty five - so a letter picks the family and the level is stepped
+ * within it, rather than one key per product.
+ *
+ *   0..9   reflectivity levels 0 to 9      r  next reflectivity level
+ *   p      rain rate                       d  next ZDR level
+ *   h      echo top height                 v  next velocity level
+ *   s      phenomena                       q  next precipitation sum
+ *   [ ]    previous / next level of whatever family is on screen
+ *
+ * KEY_PRODUCT+i names maps[i] outright, which is how the Qt panel reaches a
+ * product that has no key of its own.
+ */
+static int step_family(product_family family,int step)
+{
+int list[MaxNoMaps],count=0;
+int i,at=-1,n;
+
+  for (i=0;i<no_maps;i++)
+     if (maps[i].family==family) list[count++]=i;
+  if (count==0) return 0;
+
+  for (i=0;i<count;i++) if (list[i]==current_map) at=i;
+
+  if (at<0) {          /* entering the family: first level that has data */
+     for (i=0;i<count;i++) if (map_present(list[i])) break;
+     if (i==count) i=0;
+     set_cur_map(maps[list[i]].mapid);
+     return 1;
+  }
+
+  for (n=1;n<=count;n++) {
+     i=((at+n*step)%count+count)%count;
+     if (map_present(list[i])) {
+        set_cur_map(maps[list[i]].mapid);
+        break;
+     }
+  }
+  return 1;            /* the family was recognised even if nothing moved */
+}
+
+int select_product(int key) {
+
+  if (key>=KEY_PRODUCT && key<KEY_PRODUCT+no_maps) {
+     set_cur_map(maps[key-KEY_PRODUCT].mapid);
+     return 1;
+  }
+
+  switch (key) {
+     case '0': case '1': case '2': case '3': case '4':
+     case '5': case '6': case '7': case '8': case '9':
+                set_cur_map(MAP_0+key-'0');  return 1;
+     case 'p':
+     case 'P':  set_cur_map(MAP_P);          return 1;
+     case 'h':
+     case 'H':  set_cur_map(MAP_H);          return 1;
+     case 's':
+     case 'S':  set_cur_map(MAP_S);          return 1;
+     case 'r':
+     case 'R':  return step_family(FAM_DBZ,1);
+     case 'q':
+     case 'Q':  return step_family(FAM_SUM,1);
+     case 'd':
+     case 'D':  return step_family(FAM_ZDR,1);
+     case 'v':
+     case 'V':  return step_family(FAM_VEL,1);
+     case ']':  return step_family(maps[current_map].family,1);
+     case '[':  return step_family(maps[current_map].family,-1);
+     default:   return 0;
+  }
 }
 
 int key_pressed(int key) { /* Returns 0 if OK to continue, 1 if Quit */
@@ -209,28 +242,13 @@ int max_down=MSIZE/2-WINDOW_YSIZE/MPIX/2-1;
 // printf ("key=%d\n",key);
 
 	/*	printf("\n =%i",key);*/
+	if (select_product(key)) { draw_map(1); return 0; }
+
 	switch (key)
 		{
 
 //		case 363:  return 1;
 		case 27:   return 1;
-		case '0':  set_cur_map(MAP_0); break;
-		case '1':  set_cur_map(MAP_1); break;
-		case '2':  set_cur_map(MAP_2); break;
-		case '3':  set_cur_map(MAP_3); break;
-		case '4':  set_cur_map(MAP_4); break;
-		case '5':  set_cur_map(MAP_5); break;
-		case '6':  set_cur_map(MAP_6); break;
-		case '7':  set_cur_map(MAP_7); break;
-		case '8':  set_cur_map(MAP_8); break;
-		case 'p':
-		case 'P':  set_cur_map(MAP_P); break;
-		case 'h':
-		case 'H':  set_cur_map(MAP_H); break;
-		case 's':
-		case 'S':  set_cur_map(MAP_S); break;
-		case 'q':
-		case 'Q':  set_cur_map(MAP_Q); break;
 		case 'a':
 		case 'A':  result=archive();
 			   if (result!=-1) {
@@ -347,6 +365,8 @@ int lastflag;
 FILE *out;
 int hrs,mins,time=0;
 int movie=0;
+map_type want_id=MAP_1;   /* the product to open with */
+int level;
 
 
 for (i=1;i<argc;i++) {
@@ -354,7 +374,25 @@ for (i=1;i<argc;i++) {
    sscanf(argv[i],"port%d",&port_only);
    sprintf(portcfg,"image%d.cfg",port_only);
    image_cfg=portcfg;  //override center;
-  } else if (!strncmp(argv[i],"map",3))  sscanf(argv[i],"map%d",&current_map);
+  } else if (!strncmp(argv[i],"map",3)) {
+     /* mapN used to be a raw index into maps[], which meant something
+      * different for every table.  The table is generated now, so N is the
+      * constant altitude reflectivity level - the number the digit keys use. */
+     sscanf(argv[i],"map%d",&level);
+     if (level>=0 && level<=15) want_id=MAP_0+level;
+  } else if (!strncmp(argv[i],"zdr",3)) {
+     sscanf(argv[i],"zdr%d",&level);
+     if (level>=1 && level<=10) want_id=MAP_D1+level-1;
+  } else if (!strncmp(argv[i],"vel",3)) {
+     sscanf(argv[i],"vel%d",&level);
+     if (level>=1 && level<=10) want_id=MAP_V1+level-1;
+  } else if (!strncmp(argv[i],"sum",3)) {
+     sscanf(argv[i],"sum%d",&level);       /* hours: 1, 3, 6, 12 or 24 */
+     want_id = level==24 ? MAP_Q24 : level==12 ? MAP_Q12 :
+               level==6  ? MAP_Q6  : level==3  ? MAP_Q3  : MAP_Q1;
+  } else if (!strcmp(argv[i],"top"))    want_id=MAP_H;
+  else if (!strcmp(argv[i],"phenom"))   want_id=MAP_S;
+  else if (!strcmp(argv[i],"rain"))     want_id=MAP_P;
   else if (!strncmp(argv[i],"paths",5)) wrk_path=argv[i];   //to allow paths1 paths2
   else if (!strncmp(argv[i],"server",6)) server =1 ;  //to skip grafs
   else if (!strncmp(argv[i],"time",4)) {
@@ -366,7 +404,8 @@ for (i=1;i<argc;i++) {
 
 
  printf("IMAGE version 550 ot 22.05.2013\n");
- read_cfg(wrk_path,image_cfg);
+ read_cfg(wrk_path,image_cfg);   /* builds maps[] */
+ current_map=map_index(want_id);
  read_dir();
 
  /* Without this the file search below leaves cur_file at -1 and the drawing

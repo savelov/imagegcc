@@ -504,20 +504,54 @@ private:
         return box;
     }
 
+    /* One button per product, grouped by family and generated from the table
+     * the core builds - there are more than forty of them, and spelling them
+     * out here would only be a second copy of maps[] to keep in step.  A
+     * button carries KEY_PRODUCT+index, which key_pressed() understands. */
+    void buildProductGroups(QVBoxLayout *column)
+    {
+        struct Group {
+            int family;
+            const char *title;
+            int columns;
+        };
+        static const Group groups[] = {
+            { QT_FAM_DBZ,    QT_TR_NOOP("Reflectivity"),   6 },
+            { QT_FAM_ZDR,    QT_TR_NOOP("ZDR"),            5 },
+            { QT_FAM_VEL,    QT_TR_NOOP("Velocity"),       5 },
+            { QT_FAM_SUM,    QT_TR_NOOP("Rainfall"),       5 },
+        };
+
+        for (const Group &g : groups) {
+            QList<QPushButton *> buttons;
+            for (int i = 0; i < product_count(); i++) {
+                if (product_family_of(i) != g.family) continue;
+                const int level = product_level_of(i);
+                QString text = g.family == QT_FAM_DBZ && level == 0
+                             ? tr("Max") : QString::number(level);
+                QString tip = g.family == QT_FAM_SUM
+                            ? tr("Rainfall over the last %1 h").arg(level)
+                            : tr("%1, level %2").arg(tr(g.title)).arg(level);
+                buttons << makeButton(text, product_key_of(i), tip);
+            }
+            if (!buttons.isEmpty())
+                column->addWidget(group(tr(g.title), buttons, g.columns));
+        }
+
+        /* the one of a kind products keep their letters */
+        QList<QPushButton *> other;
+        other << makeButton(tr("Rain"), 'p', tr("Rain rate"))
+              << makeButton(tr("Top"), 'h', tr("Echo top height"))
+              << makeButton(tr("Phenom"), 's', tr("Phenomena"));
+        column->addWidget(group(tr("Other"), other, 3));
+    }
+
     QWidget *buildPanel()
     {
         QWidget *panel = new QWidget;
         QVBoxLayout *column = new QVBoxLayout(panel);
 
-        QList<QPushButton *> layers;
-        layers << makeButton(tr("Max"), 'p', tr("Maximum reflectivity"))
-               << makeButton(tr("Top"), 'h', tr("Echo top height"))
-               << makeButton(tr("Storm"), 's', tr("Storm cells"))
-               << makeButton(tr("Sum"), 'q', tr("Accumulated rainfall"));
-        for (int i = 0; i <= 8; i++)
-            layers << makeButton(QString::number(i), '0' + i,
-                                 tr("Constant altitude level %1").arg(i));
-        column->addWidget(group(tr("Product"), layers, 4));
+        buildProductGroups(column);
 
         QList<QPushButton *> time;
         time << makeButton(tr("<"), '-', tr("Previous time step"))

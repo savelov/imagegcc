@@ -65,6 +65,21 @@ int qt_wait_key(void);
  * repaints and returns a pending key, or 0.  animate() stops on space. */
 int qt_poll_key(void);
 
+/* The product table, for building the panel.  There are more than forty
+ * products now, so the buttons are generated from the table rather than
+ * listed by hand.  The labels are not exported: descr is CP866, and the C++
+ * side writes its own from the family and the level.  Keep these in step
+ * with enum product_families in image.h. */
+enum {
+   QT_FAM_DBZ = 0, QT_FAM_RAIN, QT_FAM_SUM, QT_FAM_ZDR, QT_FAM_VEL,
+   QT_FAM_HEIGHT, QT_FAM_PHENOM, QT_FAM_COUNT
+};
+int product_count(void);
+int product_family_of(int index);
+int product_level_of(int index);
+int product_key_of(int index);      /* feed to key_pressed() */
+int map_present(int index);         /* the file on screen carries it */
+
 /* entry points of the existing program */
 int  image_init(int argc, char *argv[]);   /* was main() */
 int  key_pressed(int key);                 /* 1 means quit */
