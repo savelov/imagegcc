@@ -174,6 +174,19 @@ off falls back to the nearest level and the nearest cell, which is the useful
 comparison: the coverage should not change, only the smoothness.  If it does,
 one of the two rules above is not doing its job.
 
+A sample is therefore a good deal wider than it is tall - typically 2 km across
+by 50 m up, which the status line spells out.  That, and not the drawing, is
+where the vertical banding in the picture comes from: across the cut there is
+only ever the map grid to go on.
+
+"Smooth shading" is a separate thing from the interpolation and is off by
+default.  It only decides whether Qt blends the colours together as the plot is
+scaled up to the window.  The palette is a band scale, so a blend of two bands
+is a colour that appears in no legend row and stands for no reading - which is
+exactly what one should not have to squint past when reading a value off the
+picture.  Smoothing belongs on the values, before a colour is chosen, and that
+is what the interpolation already does.
+
 Under the plot is a hatched band: how high the lowest beam of the nearest radar
 passes, over a 4/3 earth.  Nothing under it was ever scanned, which is not the
 same as nothing being there - and a reading can appear inside it, because the

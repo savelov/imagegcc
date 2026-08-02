@@ -479,6 +479,18 @@ public:
         return cs.value != nullptr ? &cs : nullptr;
     }
 
+    /* Blend the samples together as the plot is scaled up, or leave each one
+     * the flat rectangle it is.  Off by default, and the default matters: the
+     * palette is a band scale, so a blend of two bands is a colour that is in
+     * no legend row and stands for no reading.  Smoothing the data is what the
+     * interpolation is for, and it happens before a colour is chosen. */
+    void setSmoothShading(bool on)
+    {
+        if (shading == on) return;
+        shading = on;
+        update();
+    }
+
     /* The plot, without the axes around it. */
     QRect plotRect() const
     {
@@ -503,11 +515,14 @@ protected:
             return;
         }
 
-        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-
+        /* the samples first, with the hints they need and no others - then
+         * antialiasing for the lines drawn over them */
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, shading);
         painter.fillRect(plot, QColor(12, 12, 16));
         painter.drawImage(plot, image);
+
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+        painter.setRenderHint(QPainter::Antialiasing, true);
 
         drawGround(painter, plot);
         drawGrid(painter, plot);
@@ -630,6 +645,7 @@ private:
 
     struct cross_section cs;
     QImage image;
+    bool   shading = false;
 };
 
 /* The legend column, from the same palette the plot is coloured with. */
@@ -710,6 +726,18 @@ public:
         follow->setChecked(true);
         follow->setToolTip(tr("Recut whenever the map window loads another file"));
 
+        /* Not the same thing as the interpolation, and worth keeping apart:
+         * that one decides what the values are, this one only decides whether
+         * the colours are blended as the plot is scaled up. */
+        shade = new QCheckBox(tr("Smooth shading"));
+        shade->setChecked(false);
+        shade->setToolTip(tr("Blend the colours between samples.  Off keeps every "
+                             "sample a flat block in a colour the legend has - a "
+                             "blend of two bands is in none of them."));
+        connect(shade, &QCheckBox::toggled, this, [this](bool on) {
+            view->setSmoothShading(on);
+        });
+
         QPushButton *save = new QPushButton(tr("Save PNG"));
         connect(save, &QPushButton::clicked, this, &CrossSectionWindow::save);
 
@@ -719,6 +747,7 @@ public:
         barLayout->addWidget(new QLabel(tr("Product:")));
         barLayout->addWidget(family);
         barLayout->addWidget(smooth);
+        barLayout->addWidget(shade);
         barLayout->addWidget(follow);
         barLayout->addStretch(1);
         barLayout->addWidget(save);
@@ -815,12 +844,19 @@ private:
                       .arg(nameOf(fam)).arg(cross_section_levels(fam));
         } else {
             const struct cross_section *cs = view->section();
-            summary = tr("%1 km long, %2 levels between %3 and %4 km, %5")
+            /* The sample is as wide as half a grid cell and as tall as the
+             * vertical raster, which is nothing like square - that is where the
+             * vertical banding in the picture comes from, so say it rather than
+             * leave it to be taken for an artefact of the drawing. */
+            summary = tr("%1 km long, %2 levels between %3 and %4 km, %5, "
+                         "samples %6 km across by %7 km up")
                       .arg(cs->length_km, 0, 'f', 1)
                       .arg(cs->levels)
                       .arg(cs->base_km, 0, 'f', 1)
                       .arg(cs->top_km, 0, 'f', 1)
-                      .arg(cs->smooth ? tr("interpolated") : tr("nearest sample"));
+                      .arg(cs->smooth ? tr("interpolated") : tr("nearest sample"))
+                      .arg(cs->length_km / (cs->width > 1 ? cs->width - 1 : 1), 0, 'f', 1)
+                      .arg(cs->top_km / (cs->height > 1 ? cs->height - 1 : 1), 0, 'f', 2);
         }
         statusBar()->showMessage(summary);
     }
@@ -840,6 +876,7 @@ private:
     CrossSectionLegend *legend;
     QComboBox          *family;
     QCheckBox          *smooth;
+    QCheckBox          *shade;
     QCheckBox          *follow;
     QString             summary;
 };
