@@ -34,27 +34,85 @@ char temp[80];
 }
 
 
-void showdata(int xpix,int ypix) {
+/* The readout column down the right hand side. */
+#define READOUT_W    (24*8)
+#define READOUT_ROWS 42
+
+static void line(int row,char *text)
+{
+   outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+row*14,text);
+}
+
+/* One reading in its product's own units.  The conversions are the AKSOPRI
+ * ones from cao/conversion.py: the byte scales bufr2wrk.py writes, and the
+ * same ones mkpalettes.py coloured the palettes by. */
+static void format_reading(int index,int value,char *text)
+{
+double v;
+
+   if (value<0) { sprintf(text,"= %s",palette_nodata_label()); return; }
+   if (value==maps[index].noecho) {
+      sprintf(text,"= %s",palette_label_of(maps[index].palette,value));
+      return;
+   }
+
+   switch (maps[index].family) {
+   case FAM_DBZ:
+      sprintf(text,"= %d dBZ",value/3);
+      break;
+   case FAM_RAIN:
+      sprintf(text,"= %.1f ¨¨/Á",pow(10.,(double)value/48.-1.4375));
+      break;
+   case FAM_SUM:
+      sprintf(text,"= %.1f ¨¨",(pow(10.,(double)value/64.)-0.5)*0.1);
+      break;
+   case FAM_ZDR:
+      /* debufr wraps this scale: bytes from 123 up are 10*ZDR+127, the rest
+       * are the 0.2 dB continuation (see convert_aksopri_differential_
+       * reflectivity_byte) */
+      v=(value>=123) ? (value-127)*0.1 : (value+1)*0.1;
+      sprintf(text,"= %.1f §Å",v);
+      break;
+   case FAM_VEL:
+      sprintf(text,"= %.1f ¨/·",(value-127)/2.0);
+      break;
+   case FAM_HEIGHT:
+      sprintf(text,"= %.1f ™¨",value/10.0);
+      break;
+   case FAM_PHENOM:
+   default:
+      sprintf(text,"= %s",palette_label_of(maps[index].palette,value));
+      break;
+   }
+}
+
+/* One of the summary products, on its own line: "H= 3.4 ™¨" */
+static void summary(char tag,map_type id,int xcoord,int ycoord,int *row)
+{
+int index=map_index(id);
+char text[80],value[80];
+
+   format_reading(index,map_value(id,xcoord,ycoord),value);
+   sprintf(text,"%c%s",tag,value);
+   line((*row)++,text);
+}
+
+/* xcoord,ycoord are mapbuffer cells - the cell painted under the cursor, as
+ * surface_to_map() works it out.  This used to be handed the offset from the
+ * window centre and repeat the arithmetic itself, which is how the readout
+ * came to describe a neighbouring cell once zoomed in. */
+void showdata(int xcoord,int ycoord) {
 int dolg_gr,dolg_min,shir_gr,shir_min;
 double temp;
 float X,Y,X2,Y2,Fir,Lar;
 int radius,azym;
 char string[80];
 int mapsize=MSIZE;
-int xcoord,ycoord;
-int it ,k, k1,port,l ;
-char it1[5],s[80];
-float i;
+int it,k,row;
+char s[80];
 
-  if (xpix>0) xpix--;
-  if (ypix>0) ypix--;
-  xcoord=mapsize/2+xpix+x_left;
-  ycoord=mapsize/2+ypix+y_up;
-  if (xcoord<0) xcoord=0;
-  if (ycoord<0) ycoord=0;
-
-  convert(LU,BU,MRES*(xpix+x_left)+MRES/2,
-		-MRES*(ypix+y_up)-MRES/2,&Lar,&Fir);
+  convert(LU,BU,MRES*(xcoord-mapsize/2)+MRES/2,
+		-MRES*(ycoord-mapsize/2)-MRES/2,&Lar,&Fir);
   dolg_min=modf(Lar*GR,&temp)*60+.5;
   dolg_gr=temp;
   if (dolg_min==60) { dolg_min=0; dolg_gr++; }
@@ -72,124 +130,47 @@ float i;
     azym= azym>=0 ? azym: 360+azym;
   } /* end else if Y=0 */
 
-  sprintf(string,"x= %2d¯ %02d",dolg_gr,dolg_min);
-    outtextxy(WINDOW_LEFT+WINDOW_XSIZE+3,UPPER+16*14,string);
-  sprintf(string,"y= %2d¯ %02d",shir_gr,shir_min);
-   outtextxy(WINDOW_LEFT+WINDOW_XSIZE+3,UPPER+17*14,string);
-  sprintf(string,"r=%4i km", radius);
-     outtextxy(WINDOW_LEFT+WINDOW_XSIZE+3,UPPER+18*14,string);
-  sprintf(string,"az=%3i¯",azym);
-      outtextxy(WINDOW_LEFT+WINDOW_XSIZE+3,UPPER+19*14,string);
-  sprintf(string,"MPIX=%.2f",MPIX);
-      outtextxy(WINDOW_LEFT+WINDOW_XSIZE+3,UPPER+20*14,string);
-//  sprintf(string,"[%3d,%3d]=%3d",xcoord,ycoord,*(mapbuffer+(long)ycoord*mapsize+xcoord));
-//  sprintf(string,"[x,y]=%3d",*(mapbuffer+(long)ycoord*mapsize+xcoord));
-//  outtextxy(LBT+3,UBT+HDT+3+5*14,string);
-//  sprintf(string,"%5.1f/%3d¯",SPEED[0],AZIMUT[0]);
-//  if (SPEED[0]==-1)  sprintf(string,"?????/????");
-//  outtextxy(LBT+3,UBT+HDT+3+6*14,string);
+  /* the readout column, all of it, so that a product with fewer rows than
+   * the last one leaves nothing of it behind */
+  solid_bar(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER,
+            WINDOW_LEFT+WINDOW_XSIZE+READOUT_W,UPPER+READOUT_ROWS*14,0);
 
-// #ifdef __GNUC__
-// #ifdef __MSDOS__
-// {
-// long kbytes=_go32_dpmi_remaining_virtual_memory()/1024;
-// sprintf(string,"%5ldK",kbytes);
-// outtextxy(LBT+3,UBT+HDT+3+7*14,string);
-// }
-// #endif
-// #endif
-// #ifdef __TURBOC__
-//	{
-//	long bytes=coreleft();
-//	sprintf(string,"%5ld",bytes);
-//	outtextxy(LBT+3,UBT+HDT+3+7*14,string);
-//	}
-// #endif
+  row=0;
+  sprintf(string,"x= %2d¯ %02d",dolg_gr,dolg_min);   line(row++,string);
+  sprintf(string,"y= %2d¯ %02d",shir_gr,shir_min);   line(row++,string);
+  sprintf(string,"r=%4i km", radius);                  line(row++,string);
+  sprintf(string,"az=%3i¯",azym);                    line(row++,string);
+  sprintf(string,"MPIX=%.2f",MPIX);                    line(row++,string);
+  row++;
 
-//  sprintf(string,"Ääëéèêà");
-// outtextxy(LBT+3,UBT+HDT+3+9*14,string);
-//  sprintf(string,"ñÄé");
-// outtextxy(LBT+5,UBT+HDT+3+10*14,string);
-//    sprintf(string,"åéëäÇÄ");
-//  outtextxy(LBT+3,UBT+HDT+3+11*14,string);
-   it = get_map_data(MAP_S,xcoord,ycoord);
-	 k1=0;
-	 sprintf(s,"              ");   /* clears the previous S= line */
-   if (it!=254) {
-/*   if(flagh==0)
-       {*/
-			 for (k1=0; k1<15; k1++)
-	 if (it<=sto[k1]) break;
-  sprintf(string,"S=%s",stormmsg[k1]);
-	 }
-	 else  sprintf(string,"S=%s",palmsg[0]);
+  /* the product on screen, in its own units */
+  line(row++,maps[current_map].descr);
+  format_reading(current_map,map_value(maps[current_map].mapid,xcoord,ycoord),
+                 string);
+  line(row++,string);
+  row++;
 
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+2*14,s);
-   outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+2*14,string);
+  /* the summary products, whatever is on screen */
+  summary('S',MAP_S,xcoord,ycoord,&row);
+  summary('P',MAP_P,xcoord,ycoord,&row);
+  summary('H',MAP_H,xcoord,ycoord,&row);
+  summary('Q',MAP_Q,xcoord,ycoord,&row);
+  row++;
 
-	 it = get_map_data(MAP_P,xcoord,ycoord);
-	 if(it!=254)
-	 {i  = it;
-   i = (i-69.) / 48.; i = pow(10.,i);
-	 sprintf(string,"P=%4.1f¨¨/Á",i);
-	 }
-	 else  sprintf(string,"P=%s ",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+3*14,string);
-
-	 it = get_map_data(MAP_H,xcoord,ycoord);
-	 if(it!=254)
-	 {
-   i  = it; i=i/10.;
-	 sprintf(string,"H=%4.1f™¨ ",i);
-	 }
-		else  sprintf(string,"H=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+4*14,string);
-
-	 it = get_map_data(MAP_Q,xcoord,ycoord);
-	 if(it!=254)
-	 {
-   i  = it;
-	 i = i / 64.;/* i = pow(10.,i)/10.;*/ it=pow(10.,i)-0.5; i=(float)it/10.;
-	 sprintf(string,"Q=%4.1f¨¨ ",i);
-	 } else  sprintf(string,"Q=%s ",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+5*14,string);
-
-it = get_map_data(MAP_8,xcoord,ycoord);
-if(it!=254) sprintf(string,"8=%2d dbz ",(it+1)/3);
-			else  sprintf(string,"8=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+6*14,string);
-it = get_map_data(MAP_7,xcoord,ycoord);
-if(it!=254)	sprintf(string,"7=%2d dbz ",(it+1)/3);
-			else  sprintf(string,"7=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+7*14,string);
-it = get_map_data(MAP_6,xcoord,ycoord);
-if(it!=254)		sprintf(string,"6=%2d dbz ",(it+1)/3);
-				else  sprintf(string,"6=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+8*14,string);
-it = get_map_data(MAP_5,xcoord,ycoord);
-if(it!=254)	 	sprintf(string,"5=%2d dbz ",(it+1)/3);
-				else  sprintf(string,"5=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+9*14,string);
-it = get_map_data(MAP_4,xcoord,ycoord);
-if(it!=254)	sprintf(string,"4=%2d dbz ",(it+1)/3);
-			else  sprintf(string,"4=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+10*14,string);
-it = get_map_data(MAP_3,xcoord,ycoord);
-if(it!=254)	sprintf(string,"3=%2d dbz ",(it+1)/3);
-			else  sprintf(string,"3=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+11*14,string);
-it = get_map_data(MAP_2,xcoord,ycoord);
-if(it!=254)	sprintf(string,"2=%2d dbz ",(it+1)/3);
-			else  sprintf(string,"2=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+12*14,string);
-it = get_map_data(MAP_1,xcoord,ycoord);
-if(it!=254)	sprintf(string,"1=%2d dbz ",(it+1)/3);
-			else  sprintf(string,"1=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+13*14,string);
-it = get_map_data(MAP_0,xcoord,ycoord);
-if(it!=254)	sprintf(string,"0=%2d dbz ",(it+1)/3);
-			else  sprintf(string,"0=%s",palmsg[0]);
-	 outtextxy(WINDOW_LEFT+WINDOW_XSIZE+1,UPPER+14*14,string);
+  /* the vertical profile: every reflectivity level the file carries, plus
+   * the levels of the family on screen when that is ZDR or velocity.  All
+   * three at once would be more rows than the column has. */
+  for (k=0;k<no_maps;k++) {
+     if (!map_present(k)) continue;
+     if (maps[k].family!=FAM_DBZ &&
+         maps[k].family!=maps[current_map].family) continue;
+     if (maps[k].family!=FAM_DBZ && maps[k].family!=FAM_ZDR &&
+         maps[k].family!=FAM_VEL) continue;
+     if (row>=READOUT_ROWS-1) break;
+     format_reading(k,map_value(maps[k].mapid,xcoord,ycoord),s);
+     sprintf(string,"%s %s",maps[k].descr,s);
+     line(row++,string);
+  }
 
     }
 
@@ -230,12 +211,20 @@ if(it!=254)	sprintf(string,"0=%2d dbz ",(it+1)/3);
 
 #ifdef QTGUI
 /* Likewise for the cursor readout column down the right hand side. */
+/* Repaint the readout where it now lives.  It is normally drawn only as the
+ * cursor moves, so after a resize the column would stay blank until the mouse
+ * happened to cross the map. */
+void qt_redraw_readout(void)
+{
+   showdata(xco,yco);
+}
+
 void qt_readout_rect(int *x,int *y,int *w,int *h)
 {
    *x = WINDOW_LEFT + WINDOW_XSIZE;
-   *y = UPPER - 14;                          /* first line is UPPER+2*14 */
-   *w = 15*8;                                /* widest line is ~12 chars */
-   *h = 23*14;                               /* last one is UPPER+20*14 */
+   *y = UPPER;
+   *w = READOUT_W;
+   *h = READOUT_ROWS*14;
 }
 #endif /* QTGUI */
 

@@ -27,6 +27,9 @@
 #include <QEventLoop>
 #include <QCloseEvent>
 #include <QScrollBar>
+#include <QScreen>
+#include <QLayout>
+#include <QResizeEvent>
 
 #include <clocale>
 
@@ -73,9 +76,17 @@ public:
     void setRegion(const QRect &r)
     {
         region = r;
-        setFixedSize(r.size());
+        /* Fixed width, but the height is a preference, not a demand: these
+         * used to be setFixedSize(), which made the window taller than some
+         * screens and left the compositor unable to maximise it. */
+        setFixedWidth(r.width());
+        setMinimumHeight(0);
+        setMaximumHeight(r.height());
+        updateGeometry();
         update();
     }
+
+    QSize sizeHint() const override { return region.size(); }
 
 protected:
     void paintEvent(QPaintEvent *) override
@@ -106,6 +117,10 @@ public:
     {
         setMouseTracking(true);          /* mouse_move() wants every motion */
         setFocusPolicy(Qt::StrongFocus); /* keep the original key bindings  */
+        /* grow with the window: the map is resized to match, rather than
+         * being a fixed picture with empty scroll area around it */
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setMinimumSize(320, 240);
         qApp->installEventFilter(this);  /* see eventFilter() below         */
         rebuildImage();
     }
@@ -143,7 +158,7 @@ public:
         /* draw_map() is also called from timer() and from inside the event
          * handling below, so never pump events recursively: a nested poll
          * would eat the key the outer animate() is waiting for. */
-        if (animating) return 0;
+        if (animating || suppressPoll) return 0;
 
         refresh();
         animating = true;
@@ -189,7 +204,6 @@ public:
             mapRegion = QRect(qt_map_origin_x(), qt_map_origin_y(),
                               qt_map_width(), qt_map_height());
             mapRegion &= QRect(0, 0, w, h);
-            setFixedSize(mapRegion.size());
         }
 
         unsigned char *map = qt_map_pixels();
@@ -223,6 +237,7 @@ signals:
     void waitStateChanged(bool waiting);
     void surfaceChanged();
     void crossSectionChanged(int waitingForSecondPoint);
+    void mapResized();
 
 protected:
     /* The archive browser and the animation both read keys themselves, and
@@ -292,6 +307,22 @@ protected:
         setFocus();
     }
 
+    /* Give the core a map buffer the size of this widget and repaint into it.
+     * draw_map() ends in qt_poll_key(), which pumps the event loop; doing that
+     * from inside a resize re-enters this handler, so hold it off. */
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        if (!qt_resize_map(width(), height())) return;
+        rebuildImage();
+        suppressPoll = true;
+        draw_map(1);
+        qt_redraw_readout();
+        suppressPoll = false;
+        emit mapResized();
+        refresh();
+    }
+
     /* keys are handled in eventFilter(), so that they work no matter which
      * widget holds the focus - the canvas never has to be clicked first */
 
@@ -327,6 +358,7 @@ private:
 
     bool        waiting = false;   /* inside waitForKey() */
     bool        animating = false; /* inside pollKey()    */
+    bool        suppressPoll = false; /* inside resizeEvent() */
     int         pendingKey = -1;
     int         polledKey = 0;
     QEventLoop *keyLoop = nullptr;
@@ -362,6 +394,7 @@ public:
         g_canvas = canvas;
 
         mapScroll = new QScrollArea;
+        mapScroll->setWidgetResizable(true);   /* the canvas follows the viewport */
         mapScroll->setWidget(canvas);
         mapScroll->setAlignment(Qt::AlignCenter);
         mapScroll->setBackgroundRole(QPalette::Dark);
@@ -378,9 +411,22 @@ public:
         qt_readout_rect(&x, &y, &w, &h);
         readout->setRegion(QRect(x, y, w, h));
 
+        /* The buttons are what used to make the window 1069 pixels tall at
+         * the very least - more than the work area on a good many screens,
+         * and a window that cannot be made to fit cannot be maximised
+         * either.  Let the column scroll instead of dictating a minimum. */
+        QWidget *panel = buildPanel();
+        QScrollArea *panelScroll = new QScrollArea;
+        panelScroll->setWidget(panel);
+        panelScroll->setWidgetResizable(true);
+        panelScroll->setFrameShape(QFrame::NoFrame);
+        panelScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        panelScroll->setFixedWidth(panel->sizeHint().width()
+                                   + panelScroll->verticalScrollBar()->sizeHint().width());
+
         QWidget *central = new QWidget;
         QHBoxLayout *layout = new QHBoxLayout(central);
-        layout->addWidget(buildPanel());
+        layout->addWidget(panelScroll);
         layout->addWidget(legend,  0, Qt::AlignTop);
         layout->addWidget(mapScroll, 1);
         layout->addWidget(readout, 0, Qt::AlignTop);
@@ -391,6 +437,13 @@ public:
                 QOverload<>::of(&QWidget::update));
         connect(canvas, &MapCanvas::surfaceChanged, readout,
                 QOverload<>::of(&QWidget::update));
+
+        connect(canvas, &MapCanvas::mapResized, this, [this]() {
+            /* qt_readout_rect() is WINDOW_LEFT+WINDOW_XSIZE, which just moved */
+            int x, y, w, h;
+            qt_readout_rect(&x, &y, &w, &h);
+            readout->setRegion(QRect(x, y, w, h));
+        });
 
         connect(canvas, &MapCanvas::quitRequested, this, &QWidget::close);
         connect(canvas, &MapCanvas::waitStateChanged, this,
@@ -504,20 +557,54 @@ private:
         return box;
     }
 
+    /* One button per product, grouped by family and generated from the table
+     * the core builds - there are more than forty of them, and spelling them
+     * out here would only be a second copy of maps[] to keep in step.  A
+     * button carries KEY_PRODUCT+index, which key_pressed() understands. */
+    void buildProductGroups(QVBoxLayout *column)
+    {
+        struct Group {
+            int family;
+            const char *title;
+            int columns;
+        };
+        static const Group groups[] = {
+            { QT_FAM_DBZ,    QT_TR_NOOP("Reflectivity"),   6 },
+            { QT_FAM_ZDR,    QT_TR_NOOP("ZDR"),            5 },
+            { QT_FAM_VEL,    QT_TR_NOOP("Velocity"),       5 },
+            { QT_FAM_SUM,    QT_TR_NOOP("Rainfall"),       5 },
+        };
+
+        for (const Group &g : groups) {
+            QList<QPushButton *> buttons;
+            for (int i = 0; i < product_count(); i++) {
+                if (product_family_of(i) != g.family) continue;
+                const int level = product_level_of(i);
+                QString text = g.family == QT_FAM_DBZ && level == 0
+                             ? tr("Max") : QString::number(level);
+                QString tip = g.family == QT_FAM_SUM
+                            ? tr("Rainfall over the last %1 h").arg(level)
+                            : tr("%1, level %2").arg(tr(g.title)).arg(level);
+                buttons << makeButton(text, product_key_of(i), tip);
+            }
+            if (!buttons.isEmpty())
+                column->addWidget(group(tr(g.title), buttons, g.columns));
+        }
+
+        /* the one of a kind products keep their letters */
+        QList<QPushButton *> other;
+        other << makeButton(tr("Rain"), 'p', tr("Rain rate"))
+              << makeButton(tr("Top"), 'h', tr("Echo top height"))
+              << makeButton(tr("Phenom"), 's', tr("Phenomena"));
+        column->addWidget(group(tr("Other"), other, 3));
+    }
+
     QWidget *buildPanel()
     {
         QWidget *panel = new QWidget;
         QVBoxLayout *column = new QVBoxLayout(panel);
 
-        QList<QPushButton *> layers;
-        layers << makeButton(tr("Max"), 'p', tr("Maximum reflectivity"))
-               << makeButton(tr("Top"), 'h', tr("Echo top height"))
-               << makeButton(tr("Storm"), 's', tr("Storm cells"))
-               << makeButton(tr("Sum"), 'q', tr("Accumulated rainfall"));
-        for (int i = 0; i <= 8; i++)
-            layers << makeButton(QString::number(i), '0' + i,
-                                 tr("Constant altitude level %1").arg(i));
-        column->addWidget(group(tr("Product"), layers, 4));
+        buildProductGroups(column);
 
         QList<QPushButton *> time;
         time << makeButton(tr("<"), '-', tr("Previous time step"))
@@ -583,6 +670,14 @@ int main(int argc, char *argv[])
      * decimal point wherever the locale uses a comma - MPIX becomes 0 and
      * the map ends up blank.  Numbers stay in the C locale. */
     setlocale(LC_NUMERIC, "C");
+
+    /* The surface is allocated once, inside image_init(), and caps how large
+     * the map can ever be - so make it the size of the display rather than the
+     * 1920x1080 that used to be compiled in. */
+    if (QScreen *screen = app.primaryScreen()) {
+        const QSize px = screen->geometry().size() * screen->devicePixelRatio();
+        qt_set_screen_size(px.width(), px.height());
+    }
 
     /* read the config, load the newest files and render the first frame */
     if (image_init(argc, argv) != 0) return 1;

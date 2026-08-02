@@ -8,8 +8,10 @@
 #ifndef QT_BRIDGE_H
 #define QT_BRIDGE_H
 
-/* Size of the virtual screen the core draws into - the same geometry the
- * X11 full screen mode used to have. */
+/* Size of the virtual screen the core draws into.  It used to be the fixed
+ * geometry the X11 full screen mode had, which put a ceiling on how large the
+ * map could ever be; main() now sets it from the display before image_init(),
+ * and these are only the fallback for a run with no screen to ask. */
 #ifndef QT_SCREEN_XSIZE
 #define QT_SCREEN_XSIZE 1920
 #endif
@@ -20,6 +22,21 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Call before image_init().  The surface is allocated once, so this is the
+ * upper bound on the map for the life of the process. */
+void qt_set_screen_size(int w, int h);
+int  qt_surface_width(void);
+int  qt_surface_height(void);
+
+/* Grow or shrink the map area to w by h, within what the surface and the
+ * readout column leave room for.  Returns 1 if the geometry changed, so the
+ * caller knows to re-wrap the framebuffers and repaint. */
+int  qt_resize_map(int w, int h);
+
+/* repaint, for the resize path; declared here so the C++ side need not
+ * include image.h */
+int  draw_map(int vectors);
 
 /* called by init_graph() once the memory context exists */
 void qt_set_screen_context(void *ctx);
@@ -56,6 +73,7 @@ int  cross_section_state(void);
 
 void qt_legend_rect(int *x,int *y,int *w,int *h);
 void qt_readout_rect(int *x,int *y,int *w,int *h);
+void qt_redraw_readout(void);
 
 /* Blocking key read for the archive browser, served by the Qt event loop.
  * Implemented in qtmain.cpp; returns the same codes GetWindowKey() did. */
@@ -64,6 +82,21 @@ int qt_wait_key(void);
 /* Non blocking counterpart, called by draw_map() between animation frames:
  * repaints and returns a pending key, or 0.  animate() stops on space. */
 int qt_poll_key(void);
+
+/* The product table, for building the panel.  There are more than forty
+ * products now, so the buttons are generated from the table rather than
+ * listed by hand.  The labels are not exported: descr is CP866, and the C++
+ * side writes its own from the family and the level.  Keep these in step
+ * with enum product_families in image.h. */
+enum {
+   QT_FAM_DBZ = 0, QT_FAM_RAIN, QT_FAM_SUM, QT_FAM_ZDR, QT_FAM_VEL,
+   QT_FAM_HEIGHT, QT_FAM_PHENOM, QT_FAM_COUNT
+};
+int product_count(void);
+int product_family_of(int index);
+int product_level_of(int index);
+int product_key_of(int index);      /* feed to key_pressed() */
+int map_present(int index);         /* the file on screen carries it */
 
 /* entry points of the existing program */
 int  image_init(int argc, char *argv[]);   /* was main() */

@@ -236,7 +236,7 @@ for (port=0;port<MaxPortTables;port++)
   for (jn=0;jn<size_from;jn++)
 		for (in=0;in<size_from;in++) {
 
-		 xn=MapRes*(in-size_from/2)+(float)MapRes/2;   /* +MapRes/2 â.ª. ª¢ 0,0 á®®â¢. 2km,2km */
+		 xn=MapRes*(in-size_from/2)+(float)MapRes/2;   /* +MapRes/2 ï¿½.ï¿½. ï¿½ï¿½ 0,0 á®®ï¿½. 2km,2km */
        yn=MapRes*(jn-size_from/2)+(float)MapRes/2;
 
 
@@ -263,8 +263,8 @@ for (port=0;port<MaxPortTables;port++)
 //       x1    = cosf*sinLL0*obz;
 //       y1    = (cosf0u*sinf - sinf0u*cosf*cosLL0)*obz;
 
-       x=(x1-xc)/MapRes;              /* ®â¡à áë¢ ¥¬ ¤à®¡­ãî ç áâì */
-       y=(yc-y1)/MapRes;              /* â.ª. 3km,3km á®®â¢. ª¢.0,0 */
+       x=(x1-xc)/MapRes;              /* ï¿½ï¿½ï¿½ï¿½ë¢ ï¿½ï¿½ ï¿½à®¡ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ */
+       y=(yc-y1)/MapRes;              /* ï¿½.ï¿½. 3km,3km á®®ï¿½. ï¿½ï¿½.0,0 */
 
 		 if (x<0 || y<0 || x>=size_to || y>=size_to) y=-1;    /* leave x as is */
        my_table[(long)jn*2*size_from+in*2]  =x;
@@ -322,81 +322,9 @@ unsigned int ytab;
 // printf("\n %i %i",masx[2],masy[2]);
 
 }
-void walk_tables(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to,
-							  float MapRes, int port,int z) {
-short i,x,y,countx=0,county=0;
-//unsigned char *tb_ptr=tb;
-unsigned char *in=tbl_ptr;
-float val,jj;
-int l;
-int value,valt;
-float v,v0;
-float t[254];
-unsigned int xtab;   /* in 100 x 100 */
-unsigned int ytab;
-int rx,ry,k;
-double r[MaxPorts],rt,rmin,vt,rk;
- for (ytab=0;ytab<size_from; ytab++)
-	 for (xtab=0;xtab<size_from; xtab++) {
-    if (!countx) {
-      //	countx=*tbl_ptr++;
-      //	x=*((short *)tbl_ptr)++;
-     	countx=*in++;
-	x=*((short *)in);
-        in+=sizeof(short);
-		 }
-    if (!county) {
-       //	county=*tbl_ptr++;
-       //	y=*((short *)tbl_ptr)++;
-        county=*in++;
-	y=*((short *)in);
-        in+=sizeof(short);
-		 }
-    			ry=ytab-50; rx=xtab-50;
-					rt=hypot((double)rx,(double)ry)*MapRes;
-					l=rt;
-				/*	printf("l=%i",l);*/
-				value=0;valt=0;
-		 if (*tb!=254 && x!=-1 && y!=-1) {
-     				for(i=0; i<=port; i++) r[i]=0.;
-				value=ntb[y*size_to+x];
-				if(value>254) value=254;
-				if (value==254) ntb[y*size_to+x]=*tb;
-				else {
-						 rk=10000.;
-						 valt=*tb;
-						 for(k=port+1; k<=MaxPorts-1; k++)
-						 {
-                                                 if(fk[z][k]==0) continue;
-		 r[k]=hypot((double)(x-masx[k]),(double)(y-masy[k]))*MapRes;
-		 rk=(rk-r[k])>=0 ? r[k] : rk;
-						 }
-		 rmin=(int)rk;
-		 if(l<=rmin && l<100) {
-			 if(value<=valt) ntb[y*size_to+x]=(char)valt;
-       else
-			  ntb[y*size_to+x]=(char)value;
-							}
-			else
-		/*	printf("l-%i rmin-%i",l,rmin);*/
-			 {
-			 if ((value==3) && (valt>3 && valt<=18 && rmin<100)) ntb[y*size_to+x]=(char)value;
-			 else   {
-				if(value<=valt) ntb[y*size_to+x]=(char)valt;
-				else
-				 ntb[y*size_to+x]=(char)value;
-				}    }
-							}  /* else !=254*/
-	 }
-	 tb++;
-	 x++;
-	 countx--;
-	 county--;
-  }
-
-}
-
-void walk_table(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to) {
+/* The stronger reading wins.  Right for anything whose byte scale is ordered
+ * by severity - echo tops, and the phenomena codes 4_myavl.wrk carries. */
+void walk_table_max(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to,int nodata) {
 unsigned int i;
 short x,y,countx=0,county=0;
 unsigned char *in_ptr=tbl_ptr,*tb_ptr=tb;
@@ -413,9 +341,9 @@ unsigned char value;
 		y=*(short *)in_ptr;
 	        in_ptr+=sizeof(short);
 	 }
-	 if (*tb_ptr!=254 && x!=-1 && y!=-1) {
+	 if (*tb_ptr!=nodata && x!=-1 && y!=-1) {
 		value=ntb[y*size_to+x];
-		if (value==254 || value<*tb_ptr) ntb[y*size_to+x]=*tb_ptr;
+		if (value==nodata || value<*tb_ptr) ntb[y*size_to+x]=*tb_ptr;
 	 }
 	 tb_ptr++;
 	 x++;
@@ -425,8 +353,63 @@ unsigned char value;
 
 }
 
-void walk_table0(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to,
-							  float MapRes, int port,int z) {
+/* The nearer radar wins.  Averaging a Doppler velocity, or a differential
+ * reflectivity, over two radars looking at a cell from different directions
+ * produces a number that means nothing, so pick one reading instead of
+ * blending them.
+ *
+ * Which one is decided without remembering who wrote the cell: the port loop
+ * in read_files() runs downwards, so anything already in the cell came from a
+ * radar with a higher index, and rk below is the distance to the nearest of
+ * those.  This sample is the closer one exactly when its own range is
+ * shorter. */
+void walk_table_near(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to,
+							  float MapRes, int port,int z,int nodata) {
+short x,y,countx=0,county=0;
+unsigned char *in=tbl_ptr;
+unsigned int xtab,ytab;   /* in 100 x 100 */
+int rx,ry,k;
+double rt,rk,r;
+
+ for (ytab=0;ytab<size_from; ytab++)
+	 for (xtab=0;xtab<size_from; xtab++) {
+    if (!countx) {
+	countx=*in++;
+	x=*((short *)in);
+	in+=sizeof(short);
+    }
+    if (!county) {
+	county=*in++;
+	y=*((short *)in);
+	in+=sizeof(short);
+    }
+    if (*tb!=nodata && x!=-1 && y!=-1) {
+       if (ntb[(long)y*size_to+x]==nodata)
+	  ntb[(long)y*size_to+x]=*tb;
+       else {
+	  ry=ytab-size_from/2; rx=xtab-size_from/2;
+	  rt=hypot((double)rx,(double)ry)*MapRes;   /* range from this radar */
+	  rk=1000000.;
+	  for (k=port+1; k<=MaxPorts-1; k++) {
+	     if (fk[z][k]==0) continue;
+	     r=hypot((double)(x-masx[k]),(double)(y-masy[k]))*MapRes;
+	     if (r<rk) rk=r;
+	  }
+	  if (rt<rk) ntb[(long)y*size_to+x]=*tb;
+       }
+    }
+    tb++;
+    x++;
+    countx--;
+    county--;
+  }
+
+}
+
+/* Inverse distance weighted in Z, for reflectivity and what is derived from
+ * it: two radars seeing the same cell are averaged, weighted by range. */
+void walk_table_idw(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to,
+							  float MapRes, int port,int z,int nodata) {
 short i,x,y,countx=0,county=0;
 //unsigned char *tb_ptr=tb;
 unsigned char *in=tbl_ptr;
@@ -456,14 +439,13 @@ double r[MaxPorts],rt,rmin,vt,rk;
 	in+=sizeof(short);
 
 		 }
-     ry=ytab-50; rx=xtab-50;
+     ry=ytab-size_from/2; rx=xtab-size_from/2;
     	rt=hypot((double)rx,(double)ry)*MapRes;
 	l=rt;
-if ((*tb==254 && l<Rsv && x!=-1 && y!=-1)||(*tb!=254 && x!=-1 && y!=-1)) {
+if ((*tb==nodata && l<Rsv && x!=-1 && y!=-1)||(*tb!=nodata && x!=-1 && y!=-1)) {
 	for(i=0; i<MaxPorts; i++) r[i]=0.;
 	 val=*(ntb+(long)y*size_to+x);
-	 if(val>254.) val=254.;
-	if(val==254.)
+	if(val==nodata)
 	*(ntb+(long)y*size_to+x)=*tb;
 	else {
 	rk=1000000.;
@@ -471,26 +453,21 @@ if ((*tb==254 && l<Rsv && x!=-1 && y!=-1)||(*tb!=254 && x!=-1 && y!=-1)) {
  	 jj=*tb;
         	for(k=port+1; k<=MaxPorts-1; k++)
  	{
-//		 printf("\n %i %i",masx[port],masy[port]);
          if(fk[z][k]==0) continue;
  	 r[k]=hypot((double)(x-masx[k]),(double)(y-masy[k]))*MapRes;
  	 rk=(rk-r[k])>=0 ? r[k] : rk;
  	}
 	 i=rk;
- 	 if(jj==254.)  {
- 	if(i>Rst)   *(ntb+(long)y*size_to+x)=254;
+ 	 if(jj==nodata)  {
+ 	if(i>Rst)   *(ntb+(long)y*size_to+x)=nodata;
  	if(i<Rst)    *(ntb+(long)y*size_to+x)=val;
  						 }
   else {
-//		 vt=t[(int)j];
-    //     jj=jj/3.;
  	 vt=pow(10.,(double)jj/30.);
  	rmin=pow(rk,(double)cof); if(rmin==0.0) rmin=0.1;
  	rt=pow(rt,(double)cof);     if(rt==0.0)   rt=0.1;
       v=((v0/rmin+vt/rt)/(1./rmin+1./rt));
       v=log10(v)*30.;
-   //   if ((flagco==0) && v<(float)prog) v=0.;
-    //  {if(v<(float)prog) v=0.; }
  	 *(ntb+(long)y*size_to+x)=(char)v;
  	 }     }
      }
@@ -502,14 +479,16 @@ if ((*tb==254 && l<Rsv && x!=-1 && y!=-1)||(*tb!=254 && x!=-1 && y!=-1)) {
   }
 }
 
-void interpolation (unsigned char *ntb,int map_size) {
+/* Fill a hole whose four neighbours all have readings.  "Hole" is the
+ * product's own no-data byte, which is not 254 for every product. */
+void interpolation (unsigned char *ntb,int map_size,int nodata) {
 int i,j;
 unsigned char *Ptr;
 
  for (i=1;i<map_size-1;i++)
 	for (j=1; j<map_size-1;j++) {
-	  Ptr=ntb+i*map_size+j;
-	  if (*Ptr==254 && *(Ptr-1)!=254 && *(Ptr+1)!=254 && *(Ptr-map_size)!=254 && *(Ptr+map_size)!=254)
+	  Ptr=ntb+(long)i*map_size+j;
+	  if (*Ptr==nodata && *(Ptr-1)!=nodata && *(Ptr+1)!=nodata && *(Ptr-map_size)!=nodata && *(Ptr+map_size)!=nodata)
 	 *Ptr=(*(Ptr-1)+*(Ptr+1)+*(Ptr-map_size)+*(Ptr+map_size)+2)/4;
  }
 }

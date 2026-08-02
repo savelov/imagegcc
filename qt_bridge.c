@@ -9,6 +9,21 @@
 
 static GrContext *screen_ctx = NULL;
 
+/* The surface every pane is drawn on.  Sized from the display at start up so
+ * that a maximised window can use the whole monitor; it cannot be resized
+ * afterwards, because GrSetMode would throw away the contexts and colours. */
+static int surface_w = QT_SCREEN_XSIZE;
+static int surface_h = QT_SCREEN_YSIZE;
+
+void qt_set_screen_size(int w, int h)
+{
+    if (w > surface_w) surface_w = w;
+    if (h > surface_h) surface_h = h;
+}
+
+int qt_surface_width(void)  { return surface_w; }
+int qt_surface_height(void) { return surface_h; }
+
 void qt_set_screen_context(void *ctx)
 {
     screen_ctx = (GrContext *)ctx;

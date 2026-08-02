@@ -9,7 +9,6 @@
 #define MaxBoxSize 16     /* MaxVertKm*VertLines*MaxBoxSize <= DownY-15 !!!!*/
 #define MaxVertSize WINDOW_YSIZE/2  /* do not change!!! */
 #define MaxVertKm 12
-#define MaxLevels 12
 #define MTX vert_size
 #define MTY MaxVertKm*VertLines
 /*#define MaxHorizLine 540*/  /* in points, 30 reserved */
@@ -128,8 +127,13 @@ for(i=0; i<=MaxVertSize; i++) {table[i]=0; tab[i]=0; pta[i]=0;}
      }
 
 	k=0; hi=0.;
-	for (level=4;level<MaxLevels;level++)
+	/* the constant altitude reflectivity levels, wherever they sit in
+	 * maps[] - the table is built at start up now, so their indices are
+	 * not the fixed 4..11 this loop used to walk */
+	for (level=0;level<no_maps;level++)
 {
+	if (maps[level].family!=FAM_DBZ || maps[level].level==0) continue;
+	if (maps[level].mapres==0 || maps[level].bufdata==NULL) continue;
 //		 for (port=0;port<MaxPorts;port++)
 	if (maps[level].bufhead[0]/10.!=0)
 //{	 kk=maps[level].bufhead[0]/10.; break;}
