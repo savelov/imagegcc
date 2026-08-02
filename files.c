@@ -92,8 +92,8 @@ static char name_of[MaxNoMaps][16];
 static char descr_of[MaxNoMaps][16];
 
 static void add_map(map_type id,char *file,char *palette,char *title,
-                    product_family family,int level,int nodata,
-                    int nodata_alt1,int nodata_alt2,int noecho,int merge)
+                    product_family family,int level,int nodata,int nodata_alt,
+                    int noecho,int merge)
 {
    struct map_info *map;
 
@@ -108,8 +108,7 @@ static void add_map(map_type id,char *file,char *palette,char *title,
    map->family=family;
    map->level=level;
    map->nodata=nodata;
-   map->nodata_alt[0]=nodata_alt1;
-   map->nodata_alt[1]=nodata_alt2;
+   map->nodata_alt=nodata_alt;
    map->noecho=noecho;
    map->merge=merge;
    map->mapres=0;
@@ -132,22 +131,29 @@ void init_maps(void)
     * rain scale, 73 and 55 dBZ on the reflectivity one, and painting either
     * as a reading fills the whole out-of-range area with a downpour. */
    /* bufr2wrk.py writes 255 for a point with no reading.  Before it did, the
-    * run length table just saturated: 221 (1431 mm/h) from bufr2wrk itself,
-    * and 164 from debufr.exe before the pipeline changed over in July 2026.
-    * Both are folded onto 255 as the file is read. */
-   add_map(MAP_P,"dbz_0.wrk","precip_rate","Инт. мм/ч",FAM_RAIN,0,255,221,164,0,MERGE_IDW);
-   add_map(MAP_0,"dbz_0.wrk","reflectivity","Отраж макс",FAM_DBZ,0,255,221,164,0,MERGE_IDW);
+    * run length table just saturated to 221, which is 1431 mm/h - no reading,
+    * so folding it onto 255 costs nothing and is worth doing for as long as
+    * files written before the change are still in the archive.
+    *
+    * debufr.exe, which the pipeline used until July 2026, saturated to 164
+    * instead.  That one is NOT folded: 164 is a real 93..97 mm/h band, and
+    * blanking it would throw away genuine extreme rainfall to tidy up files
+    * that will age out of the archive anyway.  Those files show a ring of
+    * 93..97 mm/h where the radar sees nothing; that is the old decoder's
+    * doing and cannot be told from data. */
+   add_map(MAP_P,"dbz_0.wrk","precip_rate","Инт. мм/ч",FAM_RAIN,0,255,221,0,MERGE_IDW);
+   add_map(MAP_0,"dbz_0.wrk","reflectivity","Отраж макс",FAM_DBZ,0,255,221,0,MERGE_IDW);
    for (i=1;i<=15;i++) {
       sprintf(file,"dbz_%d.wrk",i);
       sprintf(title,"Отраж %d",i);
-      add_map(MAP_1+i-1,file,"reflectivity",title,FAM_DBZ,i,254,-1,-1,0,MERGE_IDW);
+      add_map(MAP_1+i-1,file,"reflectivity",title,FAM_DBZ,i,254,-1,0,MERGE_IDW);
    }
 
-   add_map(MAP_H,"heigh.wrk","height","Высота ВГО",FAM_HEIGHT,0,254,-1,-1,0,MERGE_MAX);
+   add_map(MAP_H,"heigh.wrk","height","Высота ВГО",FAM_HEIGHT,0,254,-1,0,MERGE_MAX);
    /* 4_myavl.wrk, not 4_storm.wrk: it stores the phenomena code itself, which
     * is what the pycao phenomena palette is keyed on.  storm.wrk carries the
     * old 0/3/5/../60 severity scale, which that palette cannot read. */
-   add_map(MAP_S,"myavl.wrk","phenomena","Опасн явл",FAM_PHENOM,0,254,-1,-1,-1,MERGE_MAX);
+   add_map(MAP_S,"myavl.wrk","phenomena","Опасн явл",FAM_PHENOM,0,254,-1,-1,MERGE_MAX);
 
    /* The sums carry their own prefix - 1_summ.wrk is Q1, 5_summ.wrk is Q24.
     * Their no-data byte is 14: bufr2wrk's precipitation table wraps past 254
@@ -156,18 +162,18 @@ void init_maps(void)
    for (i=0;i<5;i++) {
       sprintf(file,"%d_summ.wrk",i+1);
       sprintf(title,"Осадки %dч",sum_hours[i]);
-      add_map(MAP_Q1+i,file,"precip_sum",title,FAM_SUM,sum_hours[i],255,14,-1,0,MERGE_IDW);
+      add_map(MAP_Q1+i,file,"precip_sum",title,FAM_SUM,sum_hours[i],255,14,0,MERGE_IDW);
    }
 
    for (i=1;i<=10;i++) {
       sprintf(file,"dif_%d.wrk",i);
       sprintf(title,"ZDR %d",i);
-      add_map(MAP_D1+i-1,file,"zdr",title,FAM_ZDR,i,121,-1,-1,0,MERGE_NEAR);
+      add_map(MAP_D1+i-1,file,"zdr",title,FAM_ZDR,i,121,-1,0,MERGE_NEAR);
    }
    for (i=1;i<=10;i++) {
       sprintf(file,"vel_%d.wrk",i);
       sprintf(title,"Vr %d",i);
-      add_map(MAP_V1+i-1,file,"velocity",title,FAM_VEL,i,255,-1,-1,0,MERGE_NEAR);
+      add_map(MAP_V1+i-1,file,"velocity",title,FAM_VEL,i,255,-1,0,MERGE_NEAR);
    }
 }
 
@@ -514,18 +520,14 @@ flags=0;
         fk[i][port]=1;
         if (!(show_maps & PORT_BIT(port))) continue;
 
-        /* Fold the older no-data bytes onto the current one, so the merge,
+        /* Fold the previous no-data byte onto the current one, so the merge,
          * the interpolation and the palette all have a single marker to test
          * against.  Idempotent, which matters because two products share one
-         * grid.  See the maps[] table for where the old values come from. */
-        {
+         * grid.  See the maps[] table for where the old value comes from. */
+        if (maps[i].nodata_alt>=0) {
            unsigned char *grid=(unsigned char *)buffer[slot].strptr+8;
-           int a;
-           for (a=0;a<2;a++) {
-              if (maps[i].nodata_alt[a]<0) continue;
-              for (j=0;j<mapsize*mapsize;j++)
-                 if (grid[j]==maps[i].nodata_alt[a]) grid[j]=maps[i].nodata;
-           }
+           for (j=0;j<mapsize*mapsize;j++)
+              if (grid[j]==maps[i].nodata_alt) grid[j]=maps[i].nodata;
         }
 
         ptr=get_ptr(L0[port],B0[port],maps[i].mapres,mapsize,MSIZE_int);

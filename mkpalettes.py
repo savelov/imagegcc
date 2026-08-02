@@ -117,10 +117,9 @@ def product_table(conversion, ProductType):
         # bufr2wrk.py writes 255 for a point with no reading in these two.  It
         # did not always: the run length tables used to saturate instead, to
         # 221 (1431 mm/h) for the rain rate and, once the sum table wraps past
-        # 254, to 14 (0.12 mm) for the sums - and debufr.exe gave the rain rate
-        # 164 before the pipeline changed over in July 2026.  The viewer folds
-        # those onto 255 as it reads a file, so the palette only has to know
-        # the current one.  See the maps[] table in files.c.
+        # 254, to 14 (0.12 mm) for the sums.  Neither is a reachable reading,
+        # so the viewer folds both onto 255 as it reads a file and the palette
+        # only has to know the current one.  See the maps[] table in files.c.
         Entry("precip_rate", PT.precipitation_intensity_product,
               a[PT.precipitation_intensity_product], "мм/ч", nodata=255),
         Entry("precip_sum", PT.precipitation_sum_product,
