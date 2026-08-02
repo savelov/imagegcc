@@ -19,6 +19,9 @@ transform is keyed off the image descriptor in section 3):
   * H applies Table-C operators 201135/202130 to widen/rescale 021021.
   * Some precip-sum files overrun section 4 (a debufr bug) -> debufr and
     bufr2wrk both write nothing for those.
+  * The rain rate and the precip sums deviate from debufr deliberately: they
+    get a dedicated no-data byte instead of a saturated reading (RAIN_Q_MISSING,
+    see t_rain/t_q).  t_vel deviates the same way and for the same reason.
 
 Each map file is an 8-byte header + a 100*100 grid of bytes; header.wrk is a
 128-byte metadata block.  Field names/offsets follow the AKSOPRI HEADER.WRK and
@@ -111,8 +114,29 @@ def t_dbz(r, konst=0):
     # per-station dBZ calibration: konst is added to any echo (raw>=2) before the
     # palette lookup, clamped at the top (raw 127 -> 254).  raw 0/1 = no echo.
     return _DBZ[r] if r<2 else _DBZ[min(r+konst,127)]
-def t_rain(r): return _rle(_RAIN_TH,_RAIN_VAL,r)
-def t_q(r):    return _rle(_Q_TH,_Q_VAL,r)
+# The rain rate and the precipitation sums are the two products with no missing
+# marker of their own: debufr's run length tables simply saturate, so a point
+# with no reading came out as a reading.  For the rain rate that is 221, which
+# is 1431 mm/h; for the sums the table wraps past 254 and the missing value
+# lands on 14, which is 0.12 mm and entirely plausible.  Neither can be told
+# apart from data downstream, and the map viewer painted both as weather.
+#
+# Give them a dedicated byte the way t_vel already does.  255 is free in both
+# tables - t_rain tops out at 221 and t_q at 254 - and is what the viewer
+# treats as "no data" whatever the product.  254 would have been the more usual
+# choice, but t_q reaches it for a genuine 914..982 mm band.
+#
+# This is a deliberate departure from debufr, like the one in t_vel: files
+# written before it carry the saturated values instead, and the viewer still
+# folds those (see maps[] in files.c).
+RAIN_Q_MISSING = 255
+
+def t_rain(r, width=12):
+    if r==(1<<width)-1: return RAIN_Q_MISSING
+    return _rle(_RAIN_TH,_RAIN_VAL,r)
+def t_q(r, width=14):
+    if r==(1<<width)-1: return RAIN_Q_MISSING
+    return _rle(_Q_TH,_Q_VAL,r)
 def t_height(r, scale=-1, width=11):
     # echo-top height in hectometres.  BUFR physical value = r * 10**(-scale)
     # metres (scale from the 202 operator); output = physical // 100.  The
@@ -290,6 +314,9 @@ def decode_bufr(path):
                 v=elem(d); store(d,v)
                 if d in IMAGE_DESCRIPTORS:
                     sink.append(v)
+                    # the width after any 201 operator, so the transforms can
+                    # recognise the all-ones "missing" value
+                    fields["_imgwidth"]=[TB[d][4]+op["w"]]
                     if d==(0,21,21):      # echo-top height: effective scale & width
                         fields["_htscale"]=[TB[d][2]+op["s"]]
                         fields["_htwidth"]=[TB[d][4]+op["w"]]
@@ -330,6 +357,9 @@ def build_maps(fields, pixels, tkey, names, konst=0):
         # calibrate the palette against.)
         return {names[0]: hdr+bytes(10000)}
     fn=_TRANSFORM[tkey]
+    if tkey in ("rain","q"):
+        wd=fields.get("_imgwidth",[12 if tkey=="rain" else 14])[0]
+        return {names[0]: hdr+bytes(fn(r,wd) for r in pixels)}
     return {names[0]: hdr+bytes(fn(r) for r in pixels)}
 
 def _dms(centi_deg):

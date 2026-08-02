@@ -87,7 +87,7 @@ struct map_info {
 	product_family family;
 	int level;         /* altitude/section number, 0 when there is none */
 	unsigned char nodata;  /* the byte this product uses for "no data" */
-	int nodata_alt;        /* a second one, remapped on load; -1 when none */
+	int nodata_alt[2];     /* older markers, remapped on load; -1 when unused */
 	int noecho;            /* ... and for "no echo", -1 when it has none */
 	unsigned char merge;   /* enum merge_mode */
 	float mapres;      /* init by read_files() */
