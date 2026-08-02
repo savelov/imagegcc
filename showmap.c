@@ -168,15 +168,24 @@ int i;
 
 }
 
+static void map_origin(int *x_begin,int *y_begin,int *x_start,int *y_start);
+
 #if defined(GUI) || defined(QTGUI)
 /* Left button handling for the vertical cross section, factored out of the
  * X11 event loop so the Qt front end can drive it too.  First click marks
- * the start, the second draws the section, and a click while one is on
- * screen puts the map back.  The caller must have fed the current cursor
- * position to mouse_move() first: xck/yck/xco/yco come from there. */
+ * the start, the second takes the section.  The caller must have fed the
+ * current cursor position to mouse_move() first: xck/yck/xco/yco come from
+ * there.
+ *
+ * Where the section then goes differs between the two front ends.  imagegcc
+ * has nowhere to put it but the map window, so vert() paints over the map and
+ * a further click reloads the file to get the map back.  The Qt build shows it
+ * in a window of its own - see crosssect.c and the CrossSectionWindow - and
+ * leaves the map alone, drawing only the line that was cut. */
 void cross_section_click(void)
 {
    if (flagl == 0) {
+#ifndef QTGUI
       if (flagv == 1) {                 /* a section is showing: restore */
          read_files(cur_file,0);
          draw_map(1);
@@ -184,24 +193,74 @@ void cross_section_click(void)
          flagl = 0;
          return;
       }
-      draw_map(1);
+#endif
       xc1 = xck; yc1 = yck;
       xco1 = xco/2; yco1 = yco/2;
       flagl = 1;                        /* start point taken */
+      flagv = 0;                        /* the previous cut is not this one */
+      draw_map(1);
    } else {
       xc2 = xck; yc2 = yck;
       xco2 = xco/2; yco2 = yco/2;
+      flagl = 0;
+#ifdef QTGUI
+      flagv = 1;                        /* both ends taken: draw the cut */
+      draw_map(1);
+#else
       /* the section is drawn from the reflectivity levels, whatever the map
        * on screen was showing */
       set_palette("reflectivity",maps[map_index(MAP_1)].nodata);
       draw_legend(maps[map_index(MAP_1)].descr);
       vert(xco1,yco1,xco2,yco2);
-      flagl = 0;
+#endif
    }
 }
 
 /* 0 = idle, 1 = waiting for the second point, so the front end can say so */
 int cross_section_state(void) { return flagl; }
+
+#ifdef QTGUI
+/* The line that was cut, in product grid cells - what cross_section_compute()
+ * takes and what vert() is handed. */
+void cross_section_endpoints(int *x1,int *y1,int *x2,int *y2)
+{
+   *x1 = xco1; *y1 = yco1;
+   *x2 = xco2; *y2 = yco2;
+}
+
+/* Stop marking it on the map, for when the section window is closed. */
+void cross_section_forget(void)
+{
+   flagv = 0;
+   flagl = 0;
+   draw_map(1);
+}
+
+/* Draw the cut over the map, so that it stays visible while the section window
+ * is open and survives a pan, a zoom or the next file.  The endpoints are held
+ * in grid cells for that reason; this is the inverse of surface_to_map(), with
+ * the same origin, and it runs in the map context, whose origin is the map's
+ * top left rather than the surface's. */
+static void draw_cross_line(void)
+{
+   int x_begin,y_begin,x_start,y_start;
+   int x1,y1,x2,y2;
+
+   if (!flagv) return;
+
+   map_origin(&x_begin,&y_begin,&x_start,&y_start);
+   x1=x_start+(xco1*2-x_begin)*MPIX;
+   y1=y_start+(yco1*2-y_begin)*MPIX;
+   x2=x_start+(xco2*2-x_begin)*MPIX;
+   y2=y_start+(yco2*2-y_begin)*MPIX;
+
+   GrLine(x1,y1,x2,y2,colors[15]);
+   GrLine(x1+1,y1,x2+1,y2,colors[15]);
+   GrLine(x1,y1+1,x2,y2+1,colors[15]);
+   GrCircle(x1,y1,4,colors[15]);
+   GrCircle(x2,y2,4,colors[15]);
+}
+#endif /* QTGUI */
 #endif
 
 int init_graph(char *palette_file) {
@@ -395,6 +454,9 @@ for (i=0;i<y_size;i++)
 
 draw_tlo(grafs,max_grafs);
 if (vectors) show_vectors();
+#ifdef QTGUI
+draw_cross_line();      /* where the section window is cutting, if anywhere */
+#endif
 
 }   /* MRES>0 */
 

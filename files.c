@@ -130,8 +130,19 @@ void init_maps(void)
     * file's two no-data bytes - 221 is 1431 mm/h and 164 is 93 mm/h on the
     * rain scale, 73 and 55 dBZ on the reflectivity one, and painting either
     * as a reading fills the whole out-of-range area with a downpour. */
-   add_map(MAP_P,"dbz_0.wrk","precip_rate","Инт. мм/ч",FAM_RAIN,0,221,164,0,MERGE_IDW);
-   add_map(MAP_0,"dbz_0.wrk","reflectivity","Отраж макс",FAM_DBZ,0,221,164,0,MERGE_IDW);
+   /* bufr2wrk.py writes 255 for a point with no reading.  Before it did, the
+    * run length table just saturated to 221, which is 1431 mm/h - no reading,
+    * so folding it onto 255 costs nothing and is worth doing for as long as
+    * files written before the change are still in the archive.
+    *
+    * debufr.exe, which the pipeline used until July 2026, saturated to 164
+    * instead.  That one is NOT folded: 164 is a real 93..97 mm/h band, and
+    * blanking it would throw away genuine extreme rainfall to tidy up files
+    * that will age out of the archive anyway.  Those files show a ring of
+    * 93..97 mm/h where the radar sees nothing; that is the old decoder's
+    * doing and cannot be told from data. */
+   add_map(MAP_P,"dbz_0.wrk","precip_rate","Инт. мм/ч",FAM_RAIN,0,255,221,0,MERGE_IDW);
+   add_map(MAP_0,"dbz_0.wrk","reflectivity","Отраж макс",FAM_DBZ,0,255,221,0,MERGE_IDW);
    for (i=1;i<=15;i++) {
       sprintf(file,"dbz_%d.wrk",i);
       sprintf(title,"Отраж %d",i);
@@ -151,7 +162,7 @@ void init_maps(void)
    for (i=0;i<5;i++) {
       sprintf(file,"%d_summ.wrk",i+1);
       sprintf(title,"Осадки %dч",sum_hours[i]);
-      add_map(MAP_Q1+i,file,"precip_sum",title,FAM_SUM,sum_hours[i],14,-1,0,MERGE_IDW);
+      add_map(MAP_Q1+i,file,"precip_sum",title,FAM_SUM,sum_hours[i],255,14,0,MERGE_IDW);
    }
 
    for (i=1;i<=10;i++) {
@@ -509,9 +520,10 @@ flags=0;
         fk[i][port]=1;
         if (!(show_maps & PORT_BIT(port))) continue;
 
-        /* fold the second no-data byte onto the first, so that the merge, the
-         * interpolation and the palette all have one marker to test against.
-         * Idempotent, which matters because two products share one grid. */
+        /* Fold the previous no-data byte onto the current one, so the merge,
+         * the interpolation and the palette all have a single marker to test
+         * against.  Idempotent, which matters because two products share one
+         * grid.  See the maps[] table for where the old value comes from. */
         if (maps[i].nodata_alt>=0) {
            unsigned char *grid=(unsigned char *)buffer[slot].strptr+8;
            for (j=0;j<mapsize*mapsize;j++)

@@ -118,6 +118,94 @@ memory driver in a truecolor mode - which also means GRX patch 3 below is needed
 for gen-bitmap and not only for imageqt.
 
 ================================================================================
+Vertical cross sections
+================================================================================
+
+Left click the map, then click a second point, and the program cuts a vertical
+section along that line.  There are two of them, one per front end, and they
+share nothing but the two clicks.
+
+--------------------------------------------------------------------------------
+imagegcc: vert.c, unchanged
+--------------------------------------------------------------------------------
+
+The original.  It has nowhere to put the section but the map window, so it
+paints over the map; a third click reloads the file to get the map back.  The
+sampling is the nearest grid cell along a Bresenham line, the vertical raster is
+a fixed four rows per kilometre, and the gaps between the constant altitude
+levels are filled by ramping the palette bytes from the level below to the one
+above.  That ramp is what makes an echo top drift: it runs to zero over the
+whole gap, so a level with 40 dBZ under an empty one paints a smooth 40 to 0
+gradient across a kilometre where there is nothing at all.
+
+--------------------------------------------------------------------------------
+imageqt: crosssect.c, in a window of its own
+--------------------------------------------------------------------------------
+
+The Qt build leaves the map alone - it draws only the line that was cut, which
+survives panning, zooming and the next file - and opens the section in a
+separate window, with the product, the interpolation and a PNG export of its
+own.  crosssect.c computes it; the window is CrossSectionWindow in qtmain.cpp.
+
+The interpolation is three dimensional and works in physical values rather than
+in palette bytes:
+
+  - bilinear across the map grid, on every level at once;
+  - linear in altitude between the two levels bracketing the sample, at the
+    altitudes the passport gives (bufhead[0]/10), not at a fixed spacing;
+  - reflectivity averaged as linear Z and ZDR as the power ratio it is the
+    logarithm of, so 20 dBZ beside 50 dBZ is 47, not 35.  Velocity is averaged
+    as it stands.
+
+The scheme is FormRLSAir1::viewClipPlane() from uvknew, including the two rules
+that stop a smooth picture from becoming a wrong one:
+
+  - a bilinear cell whose four corners are not all readings falls back to the
+    nearest corner, so an echo edge stays an edge instead of being blended into
+    the empty grid around it;
+  - between two levels, one of which has no reading, the sample takes the other
+    level's value only while that level is the nearer of the two, and is empty
+    beyond.  Nothing is extrapolated above the highest level or below the
+    lowest either.
+
+Sampling is one column per half grid cell - the resolution the map itself is
+drawn at - and 50 m rows up to the highest level.  Turning "3D interpolation"
+off falls back to the nearest level and the nearest cell, which is the useful
+comparison: the coverage should not change, only the smoothness.  If it does,
+one of the two rules above is not doing its job.
+
+A sample is therefore a good deal wider than it is tall - typically 2 km across
+by 50 m up, which the status line spells out.  That, and not the drawing, is
+where the vertical banding in the picture comes from: across the cut there is
+only ever the map grid to go on.
+
+"Smooth shading" is a separate thing from the interpolation and is off by
+default.  It only decides whether Qt blends the colours together as the plot is
+scaled up to the window.  The palette is a band scale, so a blend of two bands
+is a colour that appears in no legend row and stands for no reading - which is
+exactly what one should not have to squint past when reading a value off the
+picture.  Smoothing belongs on the values, before a colour is chosen, and that
+is what the interpolation already does.
+
+Under the plot is a hatched band: how high the lowest beam of the nearest radar
+passes, over a 4/3 earth.  Nothing under it was ever scanned, which is not the
+same as nothing being there - and a reading can appear inside it, because the
+constant altitude products are pseudo-CAPPI and carry the lowest tilt outward.
+Ports that sent nothing are skipped when looking for the nearest radar; vert.c
+does not skip them, and their position is still (0,0), the map's corner.
+
+The dashed lines across the plot are the altitudes the data actually sits at.
+Everything between them is interpolated, and it is worth being able to see
+which is which.
+
+The values are on the same byte scales the cursor readout prints (see
+format_reading() in showdata.c): a point read off the map and off the section
+have to give one answer.  Colouring goes back through the byte, because that is
+what the .pal files are indexed by - so cross_section_byte() is the inverse of
+those scales, and it keeps off the two bytes that are not readings, or an
+interpolated sample could land on "no data" and punch a hole in an echo.
+
+================================================================================
 GRX 2.4.9 patches (2026 port to modern Linux)
 ================================================================================
 

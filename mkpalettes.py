@@ -114,17 +114,16 @@ def product_table(conversion, ProductType):
     return [
         Entry("reflectivity", PT.reflectivity_product,
               a[PT.reflectivity_product], "dBZ"),
-        # The rain rate and the sums have no no-data marker of their own in
-        # bufr2wrk.py: a point with no reading comes out as whatever the top of
-        # the run length table saturates to.  For the rain rate that is 221
-        # (1431 mm/h) - or 164 on the AKSOPRI radars, which the viewer folds
-        # onto 221 as it reads the file - and for the sums the table wraps past
-        # 254 and the missing value lands on 14 (0.12 mm).  Both are measured
-        # from the archive, not assumed; see the maps[] table in files.c.
+        # bufr2wrk.py writes 255 for a point with no reading in these two.  It
+        # did not always: the run length tables used to saturate instead, to
+        # 221 (1431 mm/h) for the rain rate and, once the sum table wraps past
+        # 254, to 14 (0.12 mm) for the sums.  Neither is a reachable reading,
+        # so the viewer folds both onto 255 as it reads a file and the palette
+        # only has to know the current one.  See the maps[] table in files.c.
         Entry("precip_rate", PT.precipitation_intensity_product,
-              a[PT.precipitation_intensity_product], "мм/ч", nodata=221),
+              a[PT.precipitation_intensity_product], "мм/ч", nodata=255),
         Entry("precip_sum", PT.precipitation_sum_product,
-              a[PT.precipitation_sum_product], "мм", nodata=14),
+              a[PT.precipitation_sum_product], "мм", nodata=255),
         Entry("zdr", PT.differential_reflectivity_product,
               a[PT.differential_reflectivity_product], "дБ", nodata=121),
         Entry("velocity", PT.velocity_product,
