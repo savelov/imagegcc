@@ -258,10 +258,21 @@ jobs:
       # are symlinks into it, so one move breaks the lot, reversibly.
       - name: Re-run with Homebrew hidden
         if: always()
+        env:
+          STRICT: ${{ vars.STRICT_STANDALONE || '0' }}
         run: |
           set -o pipefail
           CELLAR="$(brew --prefix)/Cellar"
-          restore() { [ -d "$CELLAR.hidden" ] && sudo mv "$CELLAR.hidden" "$CELLAR"; }
+          # restore() has to end in a success.  It also runs as an EXIT trap,
+          # by which point the explicit call below has already moved the
+          # directory back, so the test fails - and under the bash -e that
+          # Actions uses, a trap whose last command fails becomes the script's
+          # exit status.  That reddened the job even though every command in
+          # it had done exactly what was intended.
+          restore() {
+            if [ -d "$CELLAR.hidden" ]; then sudo mv "$CELLAR.hidden" "$CELLAR"; fi
+            return 0
+          }
           trap restore EXIT
           sudo mv "$CELLAR" "$CELLAR.hidden"
 
@@ -283,3 +294,11 @@ jobs:
               echo "condition a user without Homebrew would hit."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Informational, like the audit above: the bundle is known not to be
+          # standalone, and a red job would only restate that.  Same switch.
+          if [ "$rc" -ne 0 ] && [ "$STRICT" = "1" ]; then
+            echo "STRICT_STANDALONE is set - reporting this as a failure"
+            exit 1
+          fi
+          exit 0
