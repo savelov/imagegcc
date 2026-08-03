@@ -87,10 +87,16 @@ def write_frames(frames):
         d = os.path.join(DATA, "port%d" % port)
         os.makedirs(d, exist_ok=True)
         fn = os.path.join(d, "%02d%02d%02d%02d.%02dm" % (yy, mm, dd, hh, mi))
-        # deflate, and sorted names so a rebuild is reproducible
+        # Sorted names and a fixed member timestamp, so that rebuilding
+        # unchanged inputs gives byte-identical zips and leaves the working
+        # tree clean.  writestr() would otherwise stamp the current time
+        # into every entry and the fixture would look modified after every
+        # run.  1980-01-01 is the earliest a zip can represent.
         with zipfile.ZipFile(fn, "w", zipfile.ZIP_DEFLATED) as z:
             for name in sorted(members):
-                z.writestr(name, members[name])
+                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                z.writestr(info, members[name])
         n = len(members) - 1                      # header.wrk is not a product
         print("port%-3d %s  %2d products, %d bytes"
               % (port, os.path.basename(fn), n, os.path.getsize(fn)))
