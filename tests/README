@@ -48,3 +48,71 @@ Both bugs traced back to one line in src/include/libgrx.h, which keyed its
 integer types on architecture names and claimed long was 64 bit on mingw.
 See grx-patches/ for the fixes; patch 02 is the root cause, 04 and 05 are
 the two symptoms that were fixed first.
+
+
+Not run by run-tests.sh
+=======================
+
+scroll-cost.c       A benchmark, not a pass/fail check, so it is left out of
+                    the TESTS list.  Times the three parts of one draw_map()
+                    call - the map into RAM, the blit to the screen, and the
+                    legend - against whichever driver is named on the command
+                    line.  Run it as "scroll-cost" and again as "scroll-cost
+                    memory" to see why cursor key scrolling crawls under X11
+                    and not on Windows: a scroll step costs about 40 ms
+                    through the X server and about 1 ms against a linear
+                    frame buffer, which is what the Win32 GDI driver is.
+                    Build it by hand, see the header comment.
+
+
+bufr/, mkdata.py, data/
+=======================
+
+A small archive to render, so a build can be checked on a platform nobody
+here can boot.  The macOS workflow writes a paths file with "MAP tests/data",
+renders one frame per product family, and keeps the PNGs as artifacts - which
+is how a macOS build gets looked at without owning a Mac.
+
+bufr/       27 BUFR messages from Krasnodar (bulletin code RAKD, WMO 39408)
+            as they arrive, plus the DEBUFR.CFg that bufr2wrk.py needs for
+            the local time offset and the station table.
+
+mkdata.py   Rebuilds data/ from them through ../bufr2wrk.py.  One BUFR
+            message carries one product, so a frame is the set of messages
+            sharing a station and an observation time; mkdata.py groups them
+            and writes the zips.  Pure standard library, as bufr2wrk.py is,
+            so nothing has to be installed to regenerate the fixture:
+
+                python3 tests/mkdata.py            rebuild
+                python3 tests/mkdata.py --list     show what the BUFR holds
+
+data/       The result: portN/YYMMDDHH.MMm zips of .wrk rasters plus
+            header.wrk.  Three frames, all real observations -
+
+                22012322.00m  25 products: dbz 0-11, ZDR 2-10, storm,
+                              cloud top, phenomena, 1 h rainfall
+                25012510.50m   2 products: radial velocity 1 and 2
+                25061106.10m   1 product:  ZDR 1
+
+            The port number is only a directory name here.  The viewer takes
+            a port's position from header.wrk - files.c:477 reads bytes 47..52
+            as degrees, minutes and seconds - so the station lands in the
+            right place whichever portN it is filed under.
+
+Two things to know before using it.
+
+Name the frame you want.  With no arguments the tools open the newest frame,
+which in this fixture is the one carrying a single ZDR raster; ask for
+reflectivity there and read_files() reports "no product in this file" and
+draws an empty map.  Pass time<HH>:<MM> to pick the frame and map<N> / zdr<N>
+/ vel<N> / sum<N> / top / phenom to pick the product.  A test that takes the
+defaults measures an empty map and still passes on file size alone.
+
+Keep MAP relative.  mapdir is char[80] in files.c, so a long absolute path is
+silently truncated and the archive simply appears to be missing.
+
+Locally:
+
+    printf 'WRK RAB\nMAP tests/data\nCFG config\nGRF config\n' > paths
+    ./gen-bitmap time22:00 zdr2
+    QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=shot.png ./imageqt time22:00 map1
