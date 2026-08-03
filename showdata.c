@@ -67,10 +67,14 @@ double v;
       sprintf(text,"= %.1f ¨¨",(pow(10.,(double)value/64.)-0.5)*0.1);
       break;
    case FAM_ZDR:
-      /* debufr wraps this scale: bytes from 123 up are 10*ZDR+127, the rest
-       * are the 0.2 dB continuation (see convert_aksopri_differential_
-       * reflectivity_byte) */
-      v=(value>=123) ? (value-127)*0.1 : (value+1)*0.1;
+      /* BUFR 021003 holds round(10*ZDR)+5 unsigned in 7 bits, so ZDR below
+       * -0.5 dB underflows and reads back near the top of the range, where
+       * genuine readings above 3.5 dB also live.  The byte cannot say which
+       * it is; the split takes the likelier reading on each side.  Must stay
+       * in step with convert_aksopri_differential_reflectivity_byte, which
+       * is where the colour comes from - when the two disagree the map
+       * shows one value and the readout prints another. */
+      v=(value>=81) ? (value-127)*0.1 : (value+1)*0.1;
       sprintf(text,"= %.1f §Å",v);
       break;
    case FAM_VEL:

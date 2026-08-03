@@ -96,8 +96,209 @@ jobs:
           done
           ls -l dist
 
+      # --- does it actually run? -----------------------------------------
+      # Building proves nothing about a platform nobody here can boot, so
+      # render on the runner and keep the picture.  Both tools are headless:
+      # gen-bitmap never opens a window, and imageqt takes IMAGEQT_SHOT plus
+      # Qt's offscreen platform.  Runs after the bundle step so dist/ keeps
+      # the tracked paths file rather than the one written here.
+      - name: Smoke test - render every product family
+        run: |
+          set -eo pipefail
+          # tests/data is built from the BUFR messages in tests/bufr - see
+          # tests/README.  mapdir is char[80] in files.c, so a long absolute
+          # MAP path is silently truncated; keep it relative.
+          printf 'WRK RAB\nMAP tests/data\nCFG config\nGRF config\n' > paths
+          mkdir -p renders
+
+          # Name the frame and the product rather than taking the defaults:
+          # without arguments the tools open the newest frame, which in this
+          # fixture carries one product, and every check below would be
+          # measuring an empty map.  time<HH>:<MM> picks the frame.
+          render() {
+            label=$1; shift
+            rm -f output.png
+            ./gen-bitmap "$@" > "renders/$label.log" 2>&1 \
+              || { echo "FAIL: gen-bitmap $* exited non-zero";
+                   cat "renders/$label.log"; exit 1; }
+            # "no product" means the raster was missing and the map came out
+            # empty, which the exit status does not report.
+            if grep -qE 'Cannot open zip file|no product in this file' \
+                    "renders/$label.log"; then
+              echo "FAIL: $label did not load"; cat "renders/$label.log"; exit 1
+            fi
+            [ -f output.png ] || { echo "FAIL: $label wrote no png"; exit 1; }
+            sz=$(wc -c < output.png)
+            # a blank 1500x1100 frame is a few kB; a real one is 55-65 kB
+            [ "$sz" -gt 20000 ] \
+              || { echo "FAIL: $label looks blank ($sz bytes)"; exit 1; }
+            printf '  %-14s %6s bytes  (%s)\n' "$label" "$sz" "$*"
+            mv output.png "renders/$label.png"
+          }
+
+          echo "== gen-bitmap, one render per product family"
+          render reflectivity time22:00 map1
+          render maxreflect   time22:00 map0
+          render zdr          time22:00 zdr2
+          render height       time22:00 top
+          render phenomena    time22:00 phenom
+          render rainfall     time22:00 sum1
+          render velocity     time10:50 vel1
+
+          # Every product must look different.  Identical renders would mean
+          # the selection was ignored and one raster was drawn seven times.
+          # md5 on macOS, md5sum elsewhere - same script then runs on linux
+          if command -v md5 >/dev/null 2>&1; then HASH="md5 -q"; else HASH=md5sum; fi
+          n=$(ls renders/*.png | wc -l)
+          u=$($HASH renders/*.png | awk '{print $1}' | sort -u | wc -l)
+          echo "  $n renders, $u distinct"
+          [ "$u" -eq "$n" ] || { echo "FAIL: products render identically"; exit 1; }
+
+          echo "== imageqt (offscreen)"
+          QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=renders/imageqt-macos.png \
+            ./imageqt time22:00 zdr2 > renders/imageqt.log 2>&1 \
+            || { cat renders/imageqt.log; exit 1; }
+          cat renders/imageqt.log
+          sz=$(wc -c < renders/imageqt-macos.png)
+          echo "  imageqt window: $sz bytes"
+          [ "$sz" -gt 20000 ] || { echo "FAIL: the window looks blank"; exit 1; }
+
+          echo "smoke test passed"
+
+      - name: Keep the rendered frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imagegcc-macos-${{ runner.arch }}-render
+          path: renders
+          if-no-files-found: warn
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: imagegcc-macos-${{ runner.arch }}
           path: dist
           if-no-files-found: error
+
+      # --- would it run on a Mac without Homebrew? -----------------------
+      # Static half: walk the link graph and classify every dependency.
+      # Reports rather than gates - the bundle is known not to be standalone
+      # today, and a red build would just restate that.  Set the repository
+      # variable STRICT_STANDALONE=1 to turn the verdict into a failure once
+      # the dylibs are actually bundled.
+      - name: Audit the dynamic dependencies
+        if: always()
+        env:
+          STRICT: ${{ vars.STRICT_STANDALONE || '0' }}
+        run: |
+          python3 - "$STRICT" <<'PY'
+          import subprocess, sys, os, collections
+          strict = sys.argv[1] == "1"
+          roots = [os.path.join("dist", b) for b in
+                   ("gen-bitmap", "imagegcc", "imageqt")]
+          roots = [r for r in roots if os.path.exists(r)]
+
+          def deps(path):
+              try:
+                  out = subprocess.run(["otool", "-L", path], check=True,
+                                       capture_output=True, text=True).stdout
+              except Exception:
+                  return []
+              # first line is the file itself; the rest are "\t<path> (...)"
+              return [l.split(" (")[0].strip()
+                      for l in out.splitlines()[1:] if l.startswith("\t")]
+
+          SYSTEM = ("/usr/lib/", "/System/Library/")
+          RELOC  = ("@rpath", "@executable_path", "@loader_path")
+          seen, external = set(), collections.defaultdict(set)
+
+          queue = list(roots)
+          while queue:
+              cur = queue.pop()
+              if cur in seen:
+                  continue
+              seen.add(cur)
+              for d in deps(cur):
+                  if d.startswith(SYSTEM) or d.startswith(RELOC):
+                      continue
+                  external[d].add(os.path.basename(cur))
+                  if os.path.exists(d):
+                      queue.append(d)
+
+          lines = ["## macOS dependency audit", ""]
+          if external:
+              lines.append(f"**NOT STANDALONE** - {len(external)} "
+                           "dependencies outside the system paths:")
+              lines.append("")
+              lines.append("| dependency | needed by |")
+              lines.append("| --- | --- |")
+              for d in sorted(external):
+                  lines.append(f"| `{d}` | {', '.join(sorted(external[d]))} |")
+              lines.append("")
+              lines.append("A user without these installed cannot run the "
+                           "binaries.  Bundling them (macdeployqt for Qt, "
+                           "dylibbundler for the rest) is the fix.")
+          else:
+              lines.append("**STANDALONE** - every dependency resolves to "
+                           "/usr/lib, /System/Library or @rpath.")
+
+          report = "\n".join(lines)
+          print(report)
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a") as fh:
+                  fh.write(report + "\n")
+          if external and strict:
+              sys.exit(1)
+          PY
+
+      # Dynamic half.  The static audit cannot see plugins, and Qt dlopens
+      # its platform plugin at runtime, so hide Homebrew entirely and try
+      # again.  Everything Homebrew owns lives under Cellar; lib/ and opt/
+      # are symlinks into it, so one move breaks the lot, reversibly.
+      - name: Re-run with Homebrew hidden
+        if: always()
+        env:
+          STRICT: ${{ vars.STRICT_STANDALONE || '0' }}
+        run: |
+          set -o pipefail
+          CELLAR="$(brew --prefix)/Cellar"
+          # restore() has to end in a success.  It also runs as an EXIT trap,
+          # by which point the explicit call below has already moved the
+          # directory back, so the test fails - and under the bash -e that
+          # Actions uses, a trap whose last command fails becomes the script's
+          # exit status.  That reddened the job even though every command in
+          # it had done exactly what was intended.
+          restore() {
+            if [ -d "$CELLAR.hidden" ]; then sudo mv "$CELLAR.hidden" "$CELLAR"; fi
+            return 0
+          }
+          trap restore EXIT
+          sudo mv "$CELLAR" "$CELLAR.hidden"
+
+          rc=0
+          ./gen-bitmap > nohomebrew.log 2>&1 || rc=$?
+          QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=nohomebrew.png \
+            ./imageqt >> nohomebrew.log 2>&1 || rc=$?
+          restore
+
+          echo "== output with Homebrew hidden (exit $rc)"
+          cat nohomebrew.log || true
+          {
+            echo "## Run without Homebrew"
+            echo
+            if [ "$rc" -eq 0 ]; then
+              echo "Both tools started with Homebrew hidden - genuinely standalone."
+            else
+              echo "Exit $rc: the binaries need Homebrew present. This is the"
+              echo "condition a user without Homebrew would hit."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Informational, like the audit above: the bundle is known not to be
+          # standalone, and a red job would only restate that.  Same switch.
+          if [ "$rc" -ne 0 ] && [ "$STRICT" = "1" ]; then
+            echo "STRICT_STANDALONE is set - reporting this as a failure"
+            exit 1
+          fi
+          exit 0

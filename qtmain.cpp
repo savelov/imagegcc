@@ -1197,6 +1197,16 @@ int main(int argc, char *argv[])
      * the map ends up blank.  Numbers stay in the C locale. */
     setlocale(LC_NUMERIC, "C");
 
+    /* Same reason, the other half of it.  Those files hold cp866 bytes, and
+     * on the BSD libc that macOS uses scanf's %s and %[ are multibyte aware
+     * once LC_CTYPE names a UTF-8 locale: cp866 is not valid UTF-8, so the
+     * conversion stops at the first cyrillic byte.  read_tlo() then reads
+     * the label of a TXT line as the next command and gives up with
+     * "Invalid command code".  glibc scans bytes and never saw this, which
+     * is why it only showed up on macOS.  Text stays in the C locale too.
+     * Qt is unaffected - it keeps its own strings in UTF-16. */
+    setlocale(LC_CTYPE, "C");
+
     /* The surface is allocated once, inside image_init(), and caps how large
      * the map can ever be - so make it the size of the display rather than the
      * 1920x1080 that used to be compiled in. */
