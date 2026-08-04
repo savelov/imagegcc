@@ -162,7 +162,25 @@ jobs:
               fi
             done
           fi
-          echo "== plugins:"; ls -l "$PLUG" 2>/dev/null || echo "(none)"
+          # macdeployqt brings every plugin category it knows about - the
+          # virtual keyboard, the SVG icon engine, image formats, QML - and
+          # those link Qt modules this program never uses, which it then does
+          # not copy in.  They never load, so the app runs, but they are real
+          # dangling references and there is no reason to ship them.  Keep the
+          # platform plugins, which Qt does dlopen, and the style.
+          PLUGROOT=dist/imageqt.app/Contents/PlugIns
+          if [ -d "$PLUGROOT" ]; then
+            for d in "$PLUGROOT"/*/; do
+              case "$(basename "$d")" in
+                platforms|styles) ;;
+                *) echo "dropping plugin category $(basename "$d")"; rm -rf "$d" ;;
+              esac
+            done
+            find "$PLUGROOT/platforms" -name '*.dylib' \
+                 ! -name 'libqcocoa.dylib' ! -name 'libqoffscreen.dylib' \
+                 -print -delete 2>/dev/null || true
+          fi
+          echo "== plugins kept:"; ls -R "$PLUGROOT" 2>/dev/null || echo "(none)"
 
           # Rewriting an install name invalidates the signature, and arm64
           # macOS refuses to run a binary whose signature does not match - it
