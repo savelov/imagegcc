@@ -182,6 +182,35 @@ jobs:
           fi
           echo "== plugins kept:"; ls -R "$PLUGROOT" 2>/dev/null || echo "(none)"
 
+          # macdeployqt relocates Qt thoroughly but is shallow about the
+          # non-Qt libraries a Qt framework itself pulls in - QtDBus arrives
+          # needing libdbus, which is left in Homebrew.  Sweep whatever is
+          # still pointing outside, copy it into Frameworks and repoint it.
+          # Repeat until nothing changes, since a copied library can bring
+          # dependencies of its own.
+          FWDIR=dist/imageqt.app/Contents/Frameworks
+          mkdir -p "$FWDIR"
+          for pass in 1 2 3 4; do
+            moved=0
+            for f in $(find dist/imageqt.app -type f); do
+              if ! file "$f" | grep -q 'Mach-O'; then continue; fi
+              own=$(otool -D "$f" | sed -n 2p)
+              for d in $(otool -L "$f" | awk 'NR>1 && $1 ~ /^\/opt\/homebrew\// {print $1}'); do
+                # a library names itself first; that is its id, not a need
+                if [ "$d" = "$own" ]; then continue; fi
+                base=$(basename "$d")
+                if [ ! -f "$FWDIR/$base" ]; then
+                  cp "$d" "$FWDIR/$base"
+                  install_name_tool -id "@rpath/$base" "$FWDIR/$base"
+                fi
+                install_name_tool -change "$d" "@rpath/$base" "$f"
+                echo "  pass $pass: repointed $base in $(basename "$f")"
+                moved=1
+              done
+            done
+            if [ "$moved" -eq 0 ]; then break; fi
+          done
+
           # Rewriting an install name invalidates the signature, and arm64
           # macOS refuses to run a binary whose signature does not match - it
           # is killed on load with no useful message, which would look like a
@@ -302,15 +331,28 @@ jobs:
                    "dist/imageqt.app/Contents/MacOS/imageqt"]
           roots = [r for r in roots if os.path.exists(r)]
 
-          def deps(path):
+          def run(args):
               try:
-                  out = subprocess.run(["otool", "-L", path], check=True,
-                                       capture_output=True, text=True).stdout
+                  return subprocess.run(args, check=True, capture_output=True,
+                                        text=True).stdout
               except Exception:
+                  return ""
+
+          def deps(path):
+              out = run(["otool", "-L", path])
+              if not out:
                   return []
-              # first line is the file itself; the rest are "\t<path> (...)"
-              return [l.split(" (")[0].strip()
-                      for l in out.splitlines()[1:] if l.startswith("\t")]
+              names = [l.split(" (")[0].strip()
+                       for l in out.splitlines()[1:] if l.startswith("\t")]
+              # For a library, otool -L lists the library's own install name
+              # first.  That is what it calls itself, not something it needs,
+              # and counting it reports every library whose id was left at its
+              # build location as a missing dependency of itself.
+              own = run(["otool", "-D", path]).splitlines()
+              own = own[1].strip() if len(own) > 1 else None
+              if own and names and names[0] == own:
+                  names = names[1:]
+              return names
 
           SYSTEM = ("/usr/lib/", "/System/Library/")
           seen, external = set(), collections.defaultdict(set)
