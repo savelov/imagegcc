@@ -86,11 +86,34 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          for b in gen-bitmap imagegcc imageqt; do
+          for b in gen-bitmap imagegcc; do
             [ -f "$b" ] && cp "$b" dist/
           done
+          # imageqt goes in a .app.  Not for the sake of looking native: it is
+          # the only shape macdeployqt will work on, and macdeployqt is what
+          # can relocate Qt's frameworks - dylibbundler skips .framework
+          # bundles, which is why the first attempt at this left imageqt still
+          # loading QtWidgets out of Homebrew.
+          if [ -f imageqt ]; then
+            APP=dist/imageqt.app
+            mkdir -p $APP/Contents/MacOS
+            cp imageqt $APP/Contents/MacOS/imageqt
+            cat > $APP/Contents/Info.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+           "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleExecutable</key><string>imageqt</string>
+            <key>CFBundleIdentifier</key><string>ru.imagegcc.imageqt</string>
+            <key>CFBundleName</key><string>imageqt</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>550</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          fi
           cp -r config paths dist/ 2>/dev/null || true
-          ls -l dist
+          ls -lR dist | head -30
 
       # Copy every Homebrew dylib the binaries need into dist/libs and point
       # the install names at it, so the bundle runs on a Mac that has never
@@ -100,52 +123,62 @@ jobs:
         run: |
           set -eo pipefail
 
-          # Qt loads its platform plugin at run time, so otool cannot see it
-          # and it has to be placed by hand.  cocoa is what a user needs;
-          # offscreen is what the smoke test below runs on.  qt.conf is how a
-          # plain executable - as opposed to a .app - is told where to look.
-          PLUGDIR=""
-          for c in "$(brew --prefix qt 2>/dev/null)/share/qt/plugins" \
-                   "$(brew --prefix qtbase 2>/dev/null)/share/qt/plugins" \
-                   "$(brew --prefix qt 2>/dev/null)/plugins"; do
-            [ -d "$c/platforms" ] && PLUGDIR="$c" && break
-          done
-          [ -n "$PLUGDIR" ] || { echo "cannot find the Qt plugins"; exit 1; }
-          echo "Qt plugins: $PLUGDIR"
-
-          mkdir -p dist/plugins/platforms
-          for p in libqcocoa.dylib libqoffscreen.dylib; do
-            cp "$PLUGDIR/platforms/$p" dist/plugins/platforms/ || true
-          done
-          printf '[Paths]\nPlugins = plugins\n' > dist/qt.conf
-
+          # The two command line tools link plain dylibs, which dylibbundler
+          # handles: one invocation for both, so a shared library is copied
+          # once and both point at the same file.
           FIX=""
-          for f in dist/gen-bitmap dist/imagegcc dist/imageqt \
-                   dist/plugins/platforms/*.dylib; do
+          for f in dist/gen-bitmap dist/imagegcc; do
             [ -f "$f" ] && FIX="$FIX -x $f"
           done
-          echo "fixing:$FIX"
-
-          # One invocation for everything, so a library shared by two binaries
-          # is copied once and both point at the same file.
           dylibbundler -of -b -cd $FIX -d dist/libs -p @executable_path/libs/
+          echo "== $(ls dist/libs 2>/dev/null | wc -l) libraries in dist/libs"
+
+          # imageqt needs Qt's own tool.  macdeployqt copies the frameworks
+          # into the app, brings the plugins - which are dlopen'd, so nothing
+          # links them - writes the qt.conf that points at them, and rewrites
+          # every install name.  It is not on PATH under Homebrew.
+          MDQ=""
+          for c in "$(brew --prefix qt 2>/dev/null)/share/qt/bin/macdeployqt" \
+                   "$(brew --prefix qt 2>/dev/null)/bin/macdeployqt" \
+                   "$(brew --prefix qtbase 2>/dev/null)/share/qt/bin/macdeployqt" \
+                   "$(brew --prefix qtbase 2>/dev/null)/bin/macdeployqt"; do
+            [ -x "$c" ] && MDQ="$c" && break
+          done
+          [ -n "$MDQ" ] || { echo "cannot find macdeployqt"; exit 1; }
+          echo "macdeployqt: $MDQ"
+          "$MDQ" dist/imageqt.app -verbose=1
+
+          # The smoke test runs on the offscreen platform; macdeployqt only
+          # brings the plugins it thinks are needed, so make sure of that one.
+          PLUG=dist/imageqt.app/Contents/PlugIns/platforms
+          if [ -d "$PLUG" ] && [ ! -f "$PLUG/libqoffscreen.dylib" ]; then
+            for c in "$(brew --prefix qt)/share/qt/plugins/platforms" \
+                     "$(brew --prefix qtbase)/share/qt/plugins/platforms"; do
+              if [ -f "$c/libqoffscreen.dylib" ]; then
+                cp "$c/libqoffscreen.dylib" "$PLUG/"
+                # re-point it at the frameworks macdeployqt just placed
+                "$MDQ" dist/imageqt.app >/dev/null 2>&1 || true
+                break
+              fi
+            done
+          fi
+          echo "== plugins:"; ls -l "$PLUG" 2>/dev/null || echo "(none)"
 
           # Rewriting an install name invalidates the signature, and arm64
-          # macOS refuses to run an unsigned or wrongly signed binary - it is
-          # killed on load with no useful message.  An ad-hoc signature is
-          # enough for a binary the user runs themselves.  Libraries first,
-          # then the executables that reference them.
-          find dist/libs dist/plugins -name '*.dylib' -print0 2>/dev/null \
+          # macOS refuses to run a binary whose signature does not match - it
+          # is killed on load with no useful message, which would look like a
+          # broken build rather than a broken bundling step.  Ad-hoc is enough
+          # for something the user runs themselves.  Libraries first, then the
+          # executables that reference them.
+          find dist/libs -name '*.dylib' -print0 2>/dev/null \
             | xargs -0 -r codesign --force --sign - 2>/dev/null || true
-          for b in dist/gen-bitmap dist/imagegcc dist/imageqt; do
+          for b in dist/gen-bitmap dist/imagegcc; do
             [ -f "$b" ] && codesign --force --sign - "$b" || true
           done
-          codesign --verify --deep dist/imageqt \
-            && echo "imageqt signature verifies" || echo "codesign --verify complained"
-
-          echo "== bundled:"
-          ls -l dist/libs | head -40
-          echo "== $(ls dist/libs | wc -l) libraries in dist/libs"
+          codesign --force --deep --sign - dist/imageqt.app || true
+          codesign --verify --deep dist/imageqt.app \
+            && echo "imageqt.app signature verifies" \
+            || echo "codesign --verify complained"
 
       # --- does it actually run? -----------------------------------------
       # Building proves nothing about a platform nobody here can boot, so
@@ -208,7 +241,8 @@ jobs:
 
           echo "== imageqt (offscreen)"
           QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=renders/imageqt-macos.png \
-            dist/imageqt time22:00 zdr2 > renders/imageqt.log 2>&1 \
+            dist/imageqt.app/Contents/MacOS/imageqt time22:00 zdr2 \
+              > renders/imageqt.log 2>&1 \
             || { cat renders/imageqt.log; exit 1; }
           cat renders/imageqt.log
           sz=$(wc -c < renders/imageqt-macos.png)
@@ -246,8 +280,8 @@ jobs:
           python3 - "$STRICT" <<'PY'
           import subprocess, sys, os, collections
           strict = sys.argv[1] == "1"
-          roots = [os.path.join("dist", b) for b in
-                   ("gen-bitmap", "imagegcc", "imageqt")]
+          roots = ["dist/gen-bitmap", "dist/imagegcc",
+                   "dist/imageqt.app/Contents/MacOS/imageqt"]
           roots = [r for r in roots if os.path.exists(r)]
 
           def deps(path):
@@ -263,38 +297,51 @@ jobs:
           SYSTEM = ("/usr/lib/", "/System/Library/")
           seen, external = set(), collections.defaultdict(set)
 
-          def resolve(dep):
-              # A bundled library names itself relative to the executable.
-              # Follow it into dist/ so its own dependencies are checked too -
-              # otherwise a nested library still pointing at Homebrew would go
-              # unreported and the bundle would only look standalone.
-              for prefix in ("@executable_path/", "@loader_path/", "@rpath/"):
-                  if dep.startswith(prefix):
-                      return os.path.join("dist", dep[len(prefix):])
+          def resolve(dep, cur, exedir):
+              # A bundled library names itself relative to the executable that
+              # loaded it, or to itself.  Follow it so its own dependencies are
+              # checked too - otherwise a nested library still pointing at
+              # Homebrew, or a plugin needing something that never got copied,
+              # would pass as standalone.  @rpath is resolved the way
+              # macdeployqt lays an app out.
+              if dep.startswith("@executable_path/"):
+                  return [os.path.join(exedir, dep[len("@executable_path/"):])]
+              if dep.startswith("@loader_path/"):
+                  return [os.path.join(os.path.dirname(cur),
+                                       dep[len("@loader_path/"):])]
+              if dep.startswith("@rpath/"):
+                  tail = dep[len("@rpath/"):]
+                  return [os.path.join(exedir, tail),
+                          os.path.join(exedir, "..", "Frameworks", tail),
+                          os.path.join(os.path.dirname(cur), tail)]
               return None
 
           # plugins are dlopen'd, so nothing links them - walk them explicitly
           import glob
-          queue = list(roots) + glob.glob("dist/plugins/*/*.dylib")
+          queue = [(r, os.path.dirname(r)) for r in roots]
+          for p in glob.glob("dist/imageqt.app/Contents/PlugIns/*/*.dylib"):
+              queue.append((p, "dist/imageqt.app/Contents/MacOS"))
           while queue:
-              cur = queue.pop()
-              if cur in seen:
+              cur, exedir = queue.pop()
+              key = os.path.realpath(cur)
+              if key in seen:
                   continue
-              seen.add(cur)
+              seen.add(key)
               for d in deps(cur):
                   if d.startswith(SYSTEM):
                       continue
-                  inside = resolve(d)
-                  if inside is not None:
-                      if os.path.exists(inside):
-                          queue.append(inside)
+                  cands = resolve(d, cur, exedir)
+                  if cands is not None:
+                      hit = next((c for c in cands if os.path.exists(c)), None)
+                      if hit:
+                          queue.append((hit, exedir))
                       else:
                           external[d + "  (missing from the bundle)"].add(
                               os.path.basename(cur))
                       continue
                   external[d].add(os.path.basename(cur))
                   if os.path.exists(d):
-                      queue.append(d)
+                      queue.append((d, exedir))
 
           lines = ["## macOS dependency audit", ""]
           if external:
@@ -350,7 +397,8 @@ jobs:
           rc=0
           dist/gen-bitmap time22:00 map1 > nohomebrew.log 2>&1 || rc=$?
           QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=nohomebrew.png \
-            dist/imageqt time22:00 map1 >> nohomebrew.log 2>&1 || rc=$?
+            dist/imageqt.app/Contents/MacOS/imageqt time22:00 map1 \
+              >> nohomebrew.log 2>&1 || rc=$?
           restore
 
           echo "== output with Homebrew hidden (exit $rc)"
