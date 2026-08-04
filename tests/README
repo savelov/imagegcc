@@ -53,6 +53,15 @@ the two symptoms that were fixed first.
 Not run by run-tests.sh
 =======================
 
+zdr-roundtrip.py    Pushes all 256 of uvknew's internal ZDR values through
+                    the whole chain - uvknew's encode arithmetic, debufr's
+                    _DIF table imported from bufr2wrk.py, and the formula
+                    read back out of showdata.c - and reports what survives.
+                    Needs no BUFR file and no radar; it is arithmetic.
+                    Run it after touching any of those three.
+                    Today: 126 of 255 values survive, faithful over
+                    -4.6 .. +8.1 dB.  The rest cannot survive - see below.
+
 scroll-cost.c       A benchmark, not a pass/fail check, so it is left out of
                     the TESTS list.  Times the three parts of one draw_map()
                     call - the map into RAM, the blit to the screen, and the
