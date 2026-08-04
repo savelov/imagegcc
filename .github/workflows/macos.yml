@@ -29,6 +29,7 @@ jobs:
         run: |
           brew update -q
           brew install pkg-config libpng proj minizip qt libx11 libxext
+          brew install dylibbundler
 
       - name: Point the toolchain at Homebrew
         run: |
@@ -89,12 +90,62 @@ jobs:
             [ -f "$b" ] && cp "$b" dist/
           done
           cp -r config paths dist/ 2>/dev/null || true
-          # these link against Homebrew dylibs, so they are not standalone;
-          # otool -L records what a user would need installed
-          for b in dist/*; do
-            [ -f "$b" ] && [ -x "$b" ] && { echo "== $b"; otool -L "$b" | head -12; }
-          done
           ls -l dist
+
+      # Copy every Homebrew dylib the binaries need into dist/libs and point
+      # the install names at it, so the bundle runs on a Mac that has never
+      # seen Homebrew.  @executable_path resolves against the main executable
+      # even for a dlopen'd plugin, so one prefix serves both.
+      - name: Bundle the dylibs
+        run: |
+          set -eo pipefail
+
+          # Qt loads its platform plugin at run time, so otool cannot see it
+          # and it has to be placed by hand.  cocoa is what a user needs;
+          # offscreen is what the smoke test below runs on.  qt.conf is how a
+          # plain executable - as opposed to a .app - is told where to look.
+          PLUGDIR=""
+          for c in "$(brew --prefix qt 2>/dev/null)/share/qt/plugins" \
+                   "$(brew --prefix qtbase 2>/dev/null)/share/qt/plugins" \
+                   "$(brew --prefix qt 2>/dev/null)/plugins"; do
+            [ -d "$c/platforms" ] && PLUGDIR="$c" && break
+          done
+          [ -n "$PLUGDIR" ] || { echo "cannot find the Qt plugins"; exit 1; }
+          echo "Qt plugins: $PLUGDIR"
+
+          mkdir -p dist/plugins/platforms
+          for p in libqcocoa.dylib libqoffscreen.dylib; do
+            cp "$PLUGDIR/platforms/$p" dist/plugins/platforms/ || true
+          done
+          printf '[Paths]\nPlugins = plugins\n' > dist/qt.conf
+
+          FIX=""
+          for f in dist/gen-bitmap dist/imagegcc dist/imageqt \
+                   dist/plugins/platforms/*.dylib; do
+            [ -f "$f" ] && FIX="$FIX -x $f"
+          done
+          echo "fixing:$FIX"
+
+          # One invocation for everything, so a library shared by two binaries
+          # is copied once and both point at the same file.
+          dylibbundler -of -b -cd $FIX -d dist/libs -p @executable_path/libs/
+
+          # Rewriting an install name invalidates the signature, and arm64
+          # macOS refuses to run an unsigned or wrongly signed binary - it is
+          # killed on load with no useful message.  An ad-hoc signature is
+          # enough for a binary the user runs themselves.  Libraries first,
+          # then the executables that reference them.
+          find dist/libs dist/plugins -name '*.dylib' -print0 2>/dev/null \
+            | xargs -0 -r codesign --force --sign - 2>/dev/null || true
+          for b in dist/gen-bitmap dist/imagegcc dist/imageqt; do
+            [ -f "$b" ] && codesign --force --sign - "$b" || true
+          done
+          codesign --verify --deep dist/imageqt \
+            && echo "imageqt signature verifies" || echo "codesign --verify complained"
+
+          echo "== bundled:"
+          ls -l dist/libs | head -40
+          echo "== $(ls dist/libs | wc -l) libraries in dist/libs"
 
       # --- does it actually run? -----------------------------------------
       # Building proves nothing about a platform nobody here can boot, so
@@ -118,7 +169,7 @@ jobs:
           render() {
             label=$1; shift
             rm -f output.png
-            ./gen-bitmap "$@" > "renders/$label.log" 2>&1 \
+            dist/gen-bitmap "$@" > "renders/$label.log" 2>&1 \
               || { echo "FAIL: gen-bitmap $* exited non-zero";
                    cat "renders/$label.log"; exit 1; }
             # "no product" means the raster was missing and the map came out
@@ -136,6 +187,7 @@ jobs:
             mv output.png "renders/$label.png"
           }
 
+          # dist/ binaries, so the smoke test exercises the bundle that ships
           echo "== gen-bitmap, one render per product family"
           render reflectivity time22:00 map1
           render maxreflect   time22:00 map0
@@ -156,7 +208,7 @@ jobs:
 
           echo "== imageqt (offscreen)"
           QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=renders/imageqt-macos.png \
-            ./imageqt time22:00 zdr2 > renders/imageqt.log 2>&1 \
+            dist/imageqt time22:00 zdr2 > renders/imageqt.log 2>&1 \
             || { cat renders/imageqt.log; exit 1; }
           cat renders/imageqt.log
           sz=$(wc -c < renders/imageqt-macos.png)
@@ -209,17 +261,36 @@ jobs:
                       for l in out.splitlines()[1:] if l.startswith("\t")]
 
           SYSTEM = ("/usr/lib/", "/System/Library/")
-          RELOC  = ("@rpath", "@executable_path", "@loader_path")
           seen, external = set(), collections.defaultdict(set)
 
-          queue = list(roots)
+          def resolve(dep):
+              # A bundled library names itself relative to the executable.
+              # Follow it into dist/ so its own dependencies are checked too -
+              # otherwise a nested library still pointing at Homebrew would go
+              # unreported and the bundle would only look standalone.
+              for prefix in ("@executable_path/", "@loader_path/", "@rpath/"):
+                  if dep.startswith(prefix):
+                      return os.path.join("dist", dep[len(prefix):])
+              return None
+
+          # plugins are dlopen'd, so nothing links them - walk them explicitly
+          import glob
+          queue = list(roots) + glob.glob("dist/plugins/*/*.dylib")
           while queue:
               cur = queue.pop()
               if cur in seen:
                   continue
               seen.add(cur)
               for d in deps(cur):
-                  if d.startswith(SYSTEM) or d.startswith(RELOC):
+                  if d.startswith(SYSTEM):
+                      continue
+                  inside = resolve(d)
+                  if inside is not None:
+                      if os.path.exists(inside):
+                          queue.append(inside)
+                      else:
+                          external[d + "  (missing from the bundle)"].add(
+                              os.path.basename(cur))
                       continue
                   external[d].add(os.path.basename(cur))
                   if os.path.exists(d):
@@ -277,9 +348,9 @@ jobs:
           sudo mv "$CELLAR" "$CELLAR.hidden"
 
           rc=0
-          ./gen-bitmap > nohomebrew.log 2>&1 || rc=$?
+          dist/gen-bitmap time22:00 map1 > nohomebrew.log 2>&1 || rc=$?
           QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=nohomebrew.png \
-            ./imageqt >> nohomebrew.log 2>&1 || rc=$?
+            dist/imageqt time22:00 map1 >> nohomebrew.log 2>&1 || rc=$?
           restore
 
           echo "== output with Homebrew hidden (exit $rc)"
