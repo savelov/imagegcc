@@ -248,6 +248,7 @@ void MoveCursor(win_save *SavePtr,int x,int y);
 void HideCursor(win_save *SavePtr);
 int GetWindowKey(void);
 
+extern int save_geotiff(const char *path);   /* geotiff.c */
 extern int archive(void);
 extern int anim_begin,anim_end;
 extern int anim_running,anim_stopped;

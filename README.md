@@ -35,19 +35,30 @@ Over 300 random archives:
     4_dbz_1..15, 4_heigh, 4_myavl   254   bufr2wrk marks these itself
     4_dif_*                         121   debufr's wrapped value table
     4_vel_*                         255   bufr2wrk; 178 in older files, below
-    4_dbz_0 (rain rate)             221   or 164 - see below
-    N_summ                           14
+    4_dbz_0 (rain rate)             255   221 or 164 in older files, below
+    N_summ                          255   14 in older files, below
 
-The last two have no marker of their own: bufr2wrk.py gives reflectivity, ZDR
-and velocity a dedicated byte, but for the rain rate and the sums a missing
-point simply saturates the top of the run length table.  Where that lands
-depends on how wide the source field is - 221 (1431 mm/h) on the DMRL radars and
-164 (93 mm/h) on the AKSOPRI ones, 184 of the 210 sampled archives.  Both are
-read as no data; 164 is folded onto 221 as the file is read, so everything after
-that has one marker to test.  The cost is the 93-97 mm/h bin of the rain rate,
-which no real echo is likely to land in and which the DMRL radars cannot produce
-at all.  Untreated, the whole out-of-range area of a map reads as a downpour -
-1467 mm/h, or 73 dBZ when the same file is shown as maximum reflectivity.
+The last two had no marker of their own: bufr2wrk.py gave reflectivity, ZDR and
+velocity a dedicated byte, but for the rain rate and the sums a missing point
+simply saturated the top of the run length table.  Where that landed depended on
+the decoder - 221 (1431 mm/h) from bufr2wrk and 164 (93 mm/h) from debufr.exe,
+which the pipeline used until it changed over between 13 and 15 July 2026.  It
+is per era, not per radar: every port switched on the same days.
+
+bufr2wrk.py now writes 255 for both, the way it already did for velocity, so
+files written since have an unambiguous marker.  The viewer folds what older
+files carry, but only where folding is free:
+
+    221   rain rate, bufr2wrk     1431 mm/h, unreachable       folded onto 255
+    14    sums, both decoders     from the wrapped tail        folded onto 255
+    164   rain rate, debufr.exe   93..97 mm/h, a real band     NOT folded
+
+Blanking 164 would discard genuine extreme rainfall in every file, including the
+ones written since, to tidy up files that age out of the archive on their own.
+Pre-July-2026 rain maps therefore show a ring of 93-97 mm/h outside the coverage
+- the old decoder's doing, and not distinguishable from data in what it wrote.
+Untreated, 221 read as a 1467 mm/h downpour over the whole out-of-range area, or
+73 dBZ when the same file is shown as maximum reflectivity.
 
 Known and not handled: 4_vel_* in the older archives uses 178, which debufr
 produced by wrapping the BUFR missing value.  That is a real 25.5 m/s reading,
@@ -312,6 +323,44 @@ picks Wayland and ignores DISPLAY entirely.
     DISPLAY=:77 ./imagegcc
     DISPLAY=:77 ./imageqt -platform xcb
     DISPLAY=:77 import -window root shot.png
+
+================================================================================
+GeoTIFF output
+================================================================================
+
+gen-bitmap normally saves a picture - the map as drawn, geography and legend
+on top, in screen pixels.  `geotiff` writes the mosaic itself instead: one
+byte per grid cell, the product's palette as the TIFF colour map, and the
+georeferencing GDAL needs to place it.  It is the same product
+radar-wms/geotiff.py builds through pycao, without going through Python.
+
+    ./gen-bitmap map1  geotiff=refl.tif      # reflectivity level 1
+    ./gen-bitmap zdr3  geotiff=zdr3.tif
+    ./gen-bitmap rain  time10:00 geotiff=rain.tif
+    ./gen-bitmap sum1  geotiff=q1.tif
+
+No window is opened and nothing is drawn, so the geography overlay is not on
+it by construction.  The product must be present in the file: if it is not,
+nothing is written and the exit status is 1, rather than the on screen
+behaviour of falling back to whatever the file does carry.
+
+The grid goes out in the projection it is already built in - equidistant
+conic, centred on the CenterX/CenterY of image.cfg - so nothing is resampled
+and no value changes:
+
+    Size is 1500, 1500
+    Origin = (-3000000.000, 3000000.000)      Pixel Size = (4000.0, -4000.0)
+    Center ( 0.0, 0.0 ) ( 50d 0' 0.00"E, 54d 0' 0.01"N)
+    NoData Value=254
+
+That is not the frame pycao uses, which is `+proj=sterea +lat_0=50 +lon_0=100`.
+Reproject if a consumer wants that one:
+
+    gdalwarp -t_srs '+proj=sterea +lat_0=50 +lon_0=100' -r near in.tif out.tif
+
+`-r near` matters: the band holds palette indices, not intensities, so an
+interpolating resampler would average byte 3 and byte 9 into a value that
+means something else entirely.
 
 ================================================================================
 GrBitBlt and frame modes

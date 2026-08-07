@@ -50,7 +50,7 @@ fi
 CFLAGS="-g -std=gnu89 $PERMISSIVE -fcommon"
 
 SRC="image.c showmap.c coord.c showdata.c files.c grafs.c archive.c window.c
-     vert.c crosssect.c palette.c compat.c proj_compat.c"
+     vert.c crosssect.c palette.c geotiff.c compat.c proj_compat.c"
 
 # PROJ: use the development package when it is installed, otherwise link the
 # runtime library directly (proj_compat.c declares what it needs).
@@ -76,7 +76,7 @@ else
     fi
 fi
 
-LIBS="$GRX_LIB -lz -lpng $WINDOW_LIBS -lm $PROJ_LIBS $MINIZIP_LIBS"
+LIBS="$GRX_LIB -lz -lpng -ltiff $WINDOW_LIBS -lm $PROJ_LIBS $MINIZIP_LIBS"
 
 rm -f gen-bitmap imagegcc gen-bitmap.exe imagegcc.exe
 
