@@ -76,10 +76,31 @@ TB = {
  (0,4,1):("yr","NUM",0,0,12),(0,4,2):("mon","NUM",0,0,4),(0,4,3):("day","NUM",0,0,6),
  (0,4,4):("hr","NUM",0,0,5),(0,4,5):("mi","NUM",0,0,6),(0,4,32):("tperiod","NUM",0,0,6),
  (0,8,21):("tsig","NUM",0,0,5),
+ # RUSI (Vaisala/OPERA) raster BUFR descriptors
+ (0,1,1):("wmoblk","NUM",0,0,7),(0,1,2):("wmostn","NUM",0,0,10),
+ (0,7,7):("height7","NUM",0,-1000,17),
+ (0,11,1):("wdir","NUM",0,0,9),(0,11,2):("wspd","NUM",1,0,12),
+ (0,5,31):("rownum","NUM",0,0,12),(0,31,1):("rep1","NUM",0,0,8),
+ (0,30,2):("pix","NUM",0,0,8),        # 8-bit raster pixel = level index
 }
-TD = {(3,1,24):[(0,5,2),(0,6,2),(0,7,1)]}
+TD = {
+ (3,1,24):[(0,5,2),(0,6,2),(0,7,1)],
+ # RUSI header sequences
+ (3,1,1):[(0,1,1),(0,1,2)], (3,1,11):[(0,4,1),(0,4,2),(0,4,3)],
+ (3,1,12):[(0,4,4),(0,4,5)], (3,1,23):[(0,5,2),(0,6,2)],
+ # RUSI level tables: quantity value + delayed replication of more values
+ (3,13,9):[(0,21,1),(1,1,0),(0,31,1),(0,21,1)],    # dbZ
+ (3,13,10):[(0,21,36),(1,1,0),(0,31,1),(0,21,36)], # rain (assumed, 021036)
+ (3,13,11):[(0,21,21),(1,1,0),(0,31,1),(0,21,21)], # height
+ (3,13,12):[(0,21,22),(1,1,0),(0,31,1),(0,21,22)], # phenomena
+ # RUSI raster image: rows of run-length (031012) + literal (031001) 030002 pixels
+ (3,21,193):[(1,10,0),(0,31,2),(0,5,31),(1,7,0),(0,31,1),(1,2,0),(0,31,1),
+             (0,31,12),(0,30,2),(1,1,0),(0,31,1),(0,30,2)],
+}
 IMAGE_DESCRIPTORS = {(0,21,3),(0,21,1),(0,21,36),(0,21,14),(0,21,21),
                      (0,13,19),(0,13,20),(0,13,21),(0,13,22),(0,13,23),(0,21,22),(0,13,55)}
+# RUSI raster uses 030002 as the image; the 021xxx in its level table are NOT pixels.
+_RUSI_LEVEL_DESC = ((0,21,1),(0,21,36),(0,21,21),(0,21,22))
 
 # ======== pixel value tables (extracted from debufr, validated exact) ========
 _DIF = [0,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,35,35,37,37,39,40,40,42,42,44,45,45,47,48,49,49,51,52,53,54,54,56,57,58,59,59,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121]
@@ -276,10 +297,16 @@ def decode_bufr(path):
 
     prog=[]
     for d in raw: prog.extend(TD.get(d,[d]))
-    image_desc=next((d for d in prog if d in IMAGE_DESCRIPTORS), None)
     longname=(0,1,19) in prog             # alt (DMRL) message layout
+    rusi=(0,30,2) in prog                 # Vaisala/OPERA raster (030002 pixels)
+    if rusi:
+        image_desc=(0,30,2)
+        level_desc=next((d for d in prog if d in _RUSI_LEVEL_DESC), None)
+    else:
+        image_desc=next((d for d in prog if d in IMAGE_DESCRIPTORS), None)
+        level_desc=None
 
-    fields={}; pixels=[]; op={"w":0,"s":0}  # Table-C width/scale deltas (201/202)
+    fields={}; pixels=[]; rep=[1]; op={"w":0,"s":0}  # rep=run-length; Table-C w/s
     def elem(d):
         name,unit,scale,ref,nb=TB[d]
         if unit=="CCITTIA5":
@@ -311,8 +338,16 @@ def decode_bufr(path):
                     for _ in range(fv): walk(block,sink)
                 i+=2+X
             else:
+                # RUSI: a plain 031011/031012 is a run-length for the next pixel
+                if rusi and d in ((0,31,11),(0,31,12)):
+                    rep[0]=elem(d); i+=1; continue
                 v=elem(d); store(d,v)
-                if d in IMAGE_DESCRIPTORS:
+                if rusi:
+                    if d==(0,30,2):                 # raster pixel (level index)
+                        sink.extend([v]*rep[0]); rep[0]=1
+                    elif d==level_desc:             # 021xxx level-table value
+                        fields.setdefault("_levels",[]).append(v)
+                elif d in IMAGE_DESCRIPTORS:
                     sink.append(v)
                     # the width after any 201 operator, so the transforms can
                     # recognise the all-ones "missing" value
@@ -332,7 +367,14 @@ def map_header(fields):
     # 2=MT map size [cells], 3=ZDD accurate-data radius [km], 4=averaging method,
     # 5-7 free.  (For the precip-sum product 1_summ.wrk bytes 3-7 instead encode
     # the summation start time/interval; zero in the available sample.)
-    Hcs   = fields["height_above_stn"][-1]//100 if "height_above_stn" in fields else 0
+    if "height_above_stn" in fields:
+        Hcs = fields["height_above_stn"][-1]//100
+    elif "_levels" in fields and "height7" in fields:
+        # RUSI/OPERA raster: the CAPPI section height comes from 007007 (metres
+        # above the 1000 m reference debufr uses), in hectometres.
+        Hcs = (fields["height7"][-1]-1000)//100
+    else:
+        Hcs = 0
     MRes  = fields["pixsize1"][0]//10
     MT    = fields["pix_per_row"][0]
     return bytes([Hcs, MRes, MT, 0,0,0,0,0])
@@ -340,8 +382,39 @@ def map_header(fields):
 _TRANSFORM = {"dif":t_dif,"dbz":t_dbz,"rain":t_rain,"q":t_q,
               "height":t_height,"vel":t_vel}
 
+def _rusi_maps(fields, pixels, tkey, names, hdr):
+    # RUSI/OPERA raster: each raster byte is an index into the message's own
+    # level table (313009-012).  Pixel 0 = no echo; an index past the table
+    # (incl. 255) = no data.  Otherwise the level value lv[pixel] is the standard
+    # BUFR product code, encoded to the AKSOPRI byte the same way debufr does:
+    #   dbz    (021001): 3*(code-64)     == 3*(dBZ+1),  0 dBZ -> byte 3
+    #   height (021021): 10*code
+    #   phenom (021022): the debufr myavl/storm LUTs on the code
+    #   rain   (021036): the debufr rain LUT on the code (best effort -- debufr
+    #                    itself cannot decode 313010, so there is no reference)
+    # Validated byte-exact vs debufr for dbz/height/phenom (IPRN40-51,70,71).
+    lv=fields["_levels"]; N=len(lv)
+    def build(fn):
+        out=bytearray(len(pixels))
+        for k,p in enumerate(pixels):
+            if p==0:                 out[k]=0
+            elif p>=N or p==255:     out[k]=254
+            else:                    out[k]=fn(lv[p])&0xff
+        return hdr+bytes(out)
+    if tkey=="phenom":
+        return {names[0]: build(t_myavl), names[1]: build(t_storm)}
+    if tkey=="dbz":    return {names[0]: build(lambda L: 3*(L-64))}
+    if tkey=="height": return {names[0]: build(lambda L: 10*L)}
+    if tkey=="dif":    return {names[0]: build(t_dif)}
+    if tkey=="vel":    return {names[0]: build(t_vel)}
+    if tkey in ("rain","q"):
+        return {names[0]: build(lambda L: t_rain(L,12) if tkey=="rain" else t_q(L,14))}
+    return {names[0]: build(_TRANSFORM[tkey])}
+
 def build_maps(fields, pixels, tkey, names, konst=0):
     hdr=map_header(fields)
+    if "_levels" in fields:                     # RUSI/OPERA level-table raster
+        return _rusi_maps(fields, pixels, tkey, names, hdr)
     if tkey=="phenom":
         return {names[0]: hdr+bytes(t_myavl(c) for c in pixels),
                 names[1]: hdr+bytes(t_storm(c) for c in pixels)}
@@ -373,6 +446,7 @@ def _dms(centi_deg):
 def build_header(obs, fields, tme, cfg_name=None, konst=0):
     # Byte layout per the AKSOPRI HEADER.WRK passport (128 bytes, offsets decimal).
     h=bytearray(128)
+    rusi = "_levels" in fields                  # RUSI/OPERA raster layout
     # 0-4  local date/time = BUFR observation time + TME shift.  The shift can
     # roll the day (and month/year) over, so use real date arithmetic.
     lt=datetime.datetime(2000+obs["year"],obs["month"],obs["day"],
@@ -385,6 +459,8 @@ def build_header(obs, fields, tme, cfg_name=None, konst=0):
     # keeps the BUFR Latin name; the long-name (DMRL) layout leaves it empty.
     if cfg_name is not None:
         h[5:5+min(len(cfg_name),25)]=cfg_name[:25]
+    elif rusi:
+        pass                                    # RUSI carries no site name (matches debufr)
     elif not fields.get("_longname",[False])[0]:
         h[5:5+20]=fields["name"][0][:20].ljust(20)
     # 30-34 MRL-5 radar hardware parameters.  Not carried in the BUFR (debufr
@@ -399,13 +475,22 @@ def build_header(obs, fields, tme, cfg_name=None, konst=0):
     h[43]=fields["pixsize1"][0]//10
     # 47-49 DX  eastern longitude  (deg, min, sec)
     # 50-52 SY  northern latitude  (deg, min, sec)
-    ln_d,ln_m,ln_s=_dms(fields["lon"][0]-18000)
-    la_d,la_m,la_s=_dms(fields["lat"][0]-9000)
+    if rusi:
+        # RUSI has no single site coordinate -- debufr uses the mean of the four
+        # 301023 image-corner positions (the fractional centidegrees matter, so
+        # keep them as floats for the float32 _dms rounding).
+        lon_c=sum(fields["lon"][:4])/len(fields["lon"][:4])
+        lat_c=sum(fields["lat"][:4])/len(fields["lat"][:4])
+        ln_d,ln_m,ln_s=_dms(lon_c-18000)
+        la_d,la_m,la_s=_dms(lat_c-9000)
+    else:
+        ln_d,ln_m,ln_s=_dms(fields["lon"][0]-18000)
+        la_d,la_m,la_s=_dms(fields["lat"][0]-9000)
     h[47]=ln_d; h[48]=ln_m; h[49]=ln_s
     h[50]=la_d; h[51]=la_m; h[52]=la_s
     # 53 (passport "free" region): debufr writes the station elevation in
     # hundreds of metres, i.e. (station height + reference -400) // 100.
-    h[53]=(fields["station_height"][0]-400)//100
+    h[53]=(fields["station_height"][0]-400)//100 if "station_height" in fields else 0
     # 112 SPEED / 113-114 AZIM : feature (storm) advection speed [km/h] and
     # direction of motion [deg].  Sources differ by radar type -- MRL-5 carries
     # 019006/019005 in section 3; AMRK omits them (debufr drops the data) but
@@ -447,6 +532,8 @@ def convert(infile, outdir=".", tme=None):
         obs, fields, pixels, image_desc, iprn = decode_bufr(infile)
     except IndexError:                   # section-4 overrun (as debufr aborts)
         return None, None, iprn, None, []
+    except KeyError:                     # unknown descriptor (unsupported radar/layout)
+        return None, None, iprn, None, []
     tkey, names = product_for(iprn, image_desc)
     if tkey is None:
         return obs, fields, iprn, None, []          # unsupported
@@ -470,9 +557,13 @@ def main():
         print("IPRN%s  unsupported product (debufr produces no output) - nothing written"%iprn)
         return 0
     tme=read_cfg_tme(infile)
-    print("IPRN%s  station %s %s  %04d-%02d-%02d %02d:%02d (local)"%(
-        iprn, fields["shortname"][0].decode(errors="replace"),
-        fields["name"][0].decode(errors="replace").strip(),
+    if "_levels" in fields:            # RUSI/OPERA raster (no ASPD station name)
+        station="RUSI wmo%d%03d"%(fields["wmoblk"][0],fields["wmostn"][0])
+    else:
+        station="%s %s"%(fields["shortname"][0].decode(errors="replace"),
+                         fields["name"][0].decode(errors="replace").strip())
+    print("IPRN%s  station %s  %04d-%02d-%02d %02d:%02d (local)"%(
+        iprn, station,
         obs["year"]+2000,obs["month"],obs["day"],(obs["hour"]+tme)%24,obs["minute"]))
     if tkey is None:
         print("  unsupported product (debufr produces no output for it) - nothing written")
