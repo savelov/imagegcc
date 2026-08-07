@@ -298,6 +298,13 @@ jobs:
 
           echo "smoke test passed"
 
+      # The same fixture, out as data rather than as a picture: one GeoTIFF per
+      # product family, each read back and checked - size, palette, geo tags,
+      # per product no-data byte and the pixels.  No GDAL on the runner, so
+      # tests/geotiff-check.py parses the TIFF itself.
+      - name: GeoTIFF output
+        run: BIN=dist/gen-bitmap ./tests/geotiff-test.sh
+
       - name: Keep the rendered frames
         if: always()
         uses: actions/upload-artifact@v4
