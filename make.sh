@@ -137,4 +137,23 @@ else
     echo "skipping imageqt: no Qt5 or Qt6 found" >&2
 fi
 
+# libimage.so - the data path as a shared library, for the Python bindings
+# (pyimage.py).  GRX ships as a non-PIC static library and cannot go into a
+# shared object, so this is built with -DNOGRX from the sources that do not
+# draw: reading the archive, building the mosaic and writing a GeoTIFF never
+# needed a graphics driver.  apistub.c supplies the few display globals
+# read_cfg() sets regardless.
+echo "building libimage.so ..."
+LIBSRC="files.c coord.c geotiff.c palette.c archive.c compat.c proj_compat.c apistub.c"
+SOOBJ=.soobj
+rm -rf $SOOBJ && mkdir -p $SOOBJ
+for src in $LIBSRC; do
+    $CC $CFLAGS -DNOGRX -fPIC -I $GRX/include/ -c $src -o $SOOBJ/${src%.c}.o
+done
+# --no-undefined so a missing symbol is a build error here rather than an
+# ImportError in somebody's script
+$CC -shared -Wl,--no-undefined -o libimage.so $SOOBJ/*.o \
+    -ltiff -lz -lm $PROJ_LIBS $MINIZIP_LIBS
+rm -rf $SOOBJ
+
 echo "done"

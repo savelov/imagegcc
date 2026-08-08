@@ -1,0 +1,4 @@
+
+# the shared library for the python bindings
+libimage.so
+.soobj/

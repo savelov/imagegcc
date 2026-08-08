@@ -13,7 +13,9 @@
  * background - and 16 of those is plenty.
  */
 
+#ifndef NOGRX
 #include <grx20.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -151,6 +153,12 @@ int load_palette(const char *dir,const char *name,struct palette *out)
 /* ------------------------------------------------------------------ */
 /* installing one                                                      */
 /* ------------------------------------------------------------------ */
+
+/* The rest of this file draws, and so needs GRX.  libimage.so is built with
+ * NOGRX: writing a GeoTIFF wants the colour table out of the .pal file, not a
+ * screen to put it on, and that lets the library link without a graphics
+ * driver at all.  See pyimage.py. */
+#ifndef NOGRX
 
 /* GrAllocColor is not free - in a palette mode it consumes a hardware entry -
  * and a 256 entry table holds at most two dozen distinct colours, so allocate
@@ -307,3 +315,5 @@ void draw_legend(const char *title)
       outtextxy(LEG_LEFT+LEG_SWATCH+4,y-2,current_palette.row[i].label);
    }
 }
+
+#endif /* NOGRX */

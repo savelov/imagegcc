@@ -372,6 +372,7 @@ int port_only=0;
 char *wrk_path="paths";
 char *image_cfg="image.cfg";
 char *tiff_path=NULL;
+char *info_path=NULL;
 
 char portcfg[80];
 char fname[80];
@@ -414,6 +415,9 @@ for (i=1;i<argc;i++) {
   else if (!strncmp(argv[i],"time",4)) {
             sscanf(argv[i],"time%2d:%2d",&hrs,&mins);
 	    time=1;
+  } else if (!strncmp(argv[i],"info",4)) {
+     char *eq=strchr(argv[i],'=');
+     info_path = (eq && eq[1]) ? eq+1 : "output.json";
   } else if (!strncmp(argv[i],"geotiff",7)) {
      /* geotiff or geotiff=<file>: write the grid rather than a picture */
      char *eq=strchr(argv[i],'=');
@@ -474,6 +478,19 @@ do {
  read_files(cur_file,1);   // 1-only current file
 #endif
 
+if (info_path && !tiff_path) {
+   int ok;
+   if (maps[current_map].mapid!=want_id) {
+      fprintf(stderr,"this file carries no %s - nothing written to %s\n",
+              maps[map_index(want_id)].filename,info_path);
+      exit(1);
+   }
+   ok=save_info(info_path);
+   de_init_files();
+   free(grafs);
+   exit(ok?0:1);
+}
+
 if (tiff_path) {
    /* Data out, not a picture: no window, no drawing, no overlay.
     *
@@ -487,6 +504,7 @@ if (tiff_path) {
       exit(1);
    }
    ok=save_geotiff(tiff_path);
+   if (ok && info_path) ok=save_info(info_path);
    de_init_files();
    free(grafs);
    exit(ok?0:1);
