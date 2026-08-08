@@ -157,10 +157,23 @@ class Archive(object):
 
     _open = None
 
-    def __init__(self, paths="paths", cfg="image.cfg", library=None):
+    def __init__(self, paths="paths", cfg="image.cfg", library=None,
+                 workdir=None):
+        """`paths` names the path file; CFG/GRF/MAP inside it are resolved
+        relative to `workdir`, which defaults to the directory holding it.
+
+        The C engine reads those relative to the process working directory, so
+        the Archive chdirs there for its lifetime and restores on close().  Any
+        relative path a caller passes to geotiff() would resolve against it -
+        pass absolute ones.
+        """
         if Archive._open is not None:
             raise ImageError("an Archive is already open - the C engine keeps "
                              "its state in globals and cannot hold two")
+
+        paths = os.path.abspath(paths)
+        self._cwd = os.getcwd()
+        os.chdir(workdir or os.path.dirname(paths))
 
         self._lib = self._load_library(library)
         self._lib.image_api_init()
@@ -251,6 +264,7 @@ class Archive(object):
             os.unlink(path)
 
     def _geotiff(self, path):
+        path = os.path.abspath(path)          # the engine runs in workdir
         if not self._lib.save_geotiff(str(path).encode()):
             raise ImageError("could not write %s" % path)
 
@@ -259,6 +273,7 @@ class Archive(object):
     def close(self):
         if Archive._open is self:
             self._lib.de_init_files()
+            os.chdir(self._cwd)
             Archive._open = None
 
     def __enter__(self):
