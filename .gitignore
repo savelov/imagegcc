@@ -29,3 +29,6 @@ renders/
 # GeoTIFF test output
 tiffs/
 paths-test
+
+libimage.dll
+libimage.dylib

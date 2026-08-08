@@ -204,9 +204,15 @@ class Archive(object):
     @staticmethod
     def _load_library(path):
         if path is None:
-            path = os.path.join(HERE, "libimage.so")
+            # make.sh names it libimage.dll on windows and libimage.so
+            # everywhere else, macOS included - dlopen does not mind the
+            # suffix and this saves the caller knowing which platform it is on
+            for name in ("libimage.so", "libimage.dll", "libimage.dylib"):
+                path = os.path.join(HERE, name)
+                if os.path.exists(path):
+                    break
         if not os.path.exists(path):
-            raise ImageError("%s not found - run ./make.sh" % path)
+            raise ImageError("no libimage library in %s - run ./make.sh" % HERE)
         lib = ctypes.CDLL(path)
         lib.read_cfg.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
         lib.read_files.argtypes = [ctypes.c_int, ctypes.c_int]

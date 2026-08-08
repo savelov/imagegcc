@@ -28,7 +28,7 @@ jobs:
       - name: Install the build dependencies
         run: |
           brew update -q
-          brew install pkg-config libpng proj minizip qt libx11 libxext
+          brew install pkg-config libpng libtiff proj minizip qt libx11 libxext
           brew install dylibbundler
 
       - name: Point the toolchain at Homebrew

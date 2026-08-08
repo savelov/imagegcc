@@ -19,10 +19,24 @@ case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         GRX_LIB="$GRX/lib/win32/libgrx20.a"
         WINDOW_LIBS="-lgdi32 -luser32"
+        # libimage: a DLL, and mingw uses GNU ld
+        SOLIB=libimage.dll
+        SOFLAGS="-Wl,--no-undefined"
+        ;;
+    Darwin)
+        GRX_LIB="$GRX/lib/unix/libgrx20X.a"
+        WINDOW_LIBS="-lX11"
+        # Apple's ld has never had --no-undefined; the spelling is
+        # -undefined error, which is also its default for a dylib.  Keep the
+        # .so suffix: ctypes and dlopen do not care, and pyimage looks for it.
+        SOLIB=libimage.so
+        SOFLAGS="-Wl,-undefined,error"
         ;;
     *)
         GRX_LIB="$GRX/lib/unix/libgrx20X.a"
         WINDOW_LIBS="-lX11"
+        SOLIB=libimage.so
+        SOFLAGS="-Wl,--no-undefined"
         ;;
 esac
 
@@ -143,16 +157,17 @@ fi
 # draw: reading the archive, building the mosaic and writing a GeoTIFF never
 # needed a graphics driver.  apistub.c supplies the few display globals
 # read_cfg() sets regardless.
-echo "building libimage.so ..."
+echo "building $SOLIB ..."
 LIBSRC="files.c coord.c geotiff.c palette.c archive.c compat.c proj_compat.c apistub.c"
 SOOBJ=.soobj
 rm -rf $SOOBJ && mkdir -p $SOOBJ
 for src in $LIBSRC; do
     $CC $CFLAGS -DNOGRX -fPIC -I $GRX/include/ -c $src -o $SOOBJ/${src%.c}.o
 done
-# --no-undefined so a missing symbol is a build error here rather than an
-# ImportError in somebody's script
-$CC -shared -Wl,--no-undefined -o libimage.so $SOOBJ/*.o \
+# Refuse undefined symbols, so a missing one is a build error here rather
+# than an ImportError in somebody's script.  The flag is spelled differently
+# on Apple's linker - see the case above.
+$CC -shared $SOFLAGS -o $SOLIB $SOOBJ/*.o \
     -ltiff -lz -lm $PROJ_LIBS $MINIZIP_LIBS
 rm -rf $SOOBJ
 

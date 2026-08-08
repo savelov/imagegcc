@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            build-essential libx11-dev zlib1g-dev libpng-dev \
+            build-essential libx11-dev zlib1g-dev libpng-dev libtiff-dev \
             libproj-dev libminizip-dev qtbase5-dev qtbase5-dev-tools
 
       - name: Provide the GRX sources
