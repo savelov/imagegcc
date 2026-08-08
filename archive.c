@@ -225,6 +225,11 @@ int anim_begin,anim_end;
 void MessageLine(int);
 int DayWindow(win_save *MainWindowPtr,int i,int month_width);
 
+/* The interactive browser.  libimage.so is built with NOGRX and only wants
+ * read_dir() above; drawing a day grid needs a screen, and nothing that writes
+ * a GeoTIFF has one.  See pyimage.py. */
+#ifndef NOGRX
+
 int archive (void) {
 
 win_save *WindowPtr;
@@ -421,3 +426,5 @@ getch();
 CloseWindow(Window);
 
 }
+
+#endif /* NOGRX */

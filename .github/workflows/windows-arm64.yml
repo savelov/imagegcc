@@ -40,6 +40,7 @@ jobs:
             mingw-w64-clang-aarch64-clang
             mingw-w64-clang-aarch64-gcc-compat
             mingw-w64-clang-aarch64-pkgconf
+            mingw-w64-clang-aarch64-libtiff
             mingw-w64-clang-aarch64-zlib
             mingw-w64-clang-aarch64-libpng
             mingw-w64-clang-aarch64-proj
