@@ -25,3 +25,10 @@ __pycache__/
 
 # smoke test renders (tests/README)
 renders/
+
+# GeoTIFF test output
+tiffs/
+paths-test
+
+libimage.dll
+libimage.dylib

@@ -19,10 +19,24 @@ case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         GRX_LIB="$GRX/lib/win32/libgrx20.a"
         WINDOW_LIBS="-lgdi32 -luser32"
+        # libimage: a DLL, and mingw uses GNU ld
+        SOLIB=libimage.dll
+        SOFLAGS="-Wl,--no-undefined"
+        ;;
+    Darwin)
+        GRX_LIB="$GRX/lib/unix/libgrx20X.a"
+        WINDOW_LIBS="-lX11"
+        # Apple's ld has never had --no-undefined; the spelling is
+        # -undefined error, which is also its default for a dylib.  Keep the
+        # .so suffix: ctypes and dlopen do not care, and pyimage looks for it.
+        SOLIB=libimage.so
+        SOFLAGS="-Wl,-undefined,error"
         ;;
     *)
         GRX_LIB="$GRX/lib/unix/libgrx20X.a"
         WINDOW_LIBS="-lX11"
+        SOLIB=libimage.so
+        SOFLAGS="-Wl,--no-undefined"
         ;;
 esac
 
@@ -50,7 +64,7 @@ fi
 CFLAGS="-g -std=gnu89 $PERMISSIVE -fcommon"
 
 SRC="image.c showmap.c coord.c showdata.c files.c grafs.c archive.c window.c
-     vert.c crosssect.c palette.c compat.c proj_compat.c"
+     vert.c crosssect.c palette.c geotiff.c compat.c proj_compat.c"
 
 # PROJ: use the development package when it is installed, otherwise link the
 # runtime library directly (proj_compat.c declares what it needs).
@@ -76,7 +90,7 @@ else
     fi
 fi
 
-LIBS="$GRX_LIB -lz -lpng $WINDOW_LIBS -lm $PROJ_LIBS $MINIZIP_LIBS"
+LIBS="$GRX_LIB -lz -lpng -ltiff $WINDOW_LIBS -lm $PROJ_LIBS $MINIZIP_LIBS"
 
 rm -f gen-bitmap imagegcc gen-bitmap.exe imagegcc.exe
 
@@ -136,5 +150,25 @@ if [ -n "$QTPKG" ]; then
 else
     echo "skipping imageqt: no Qt5 or Qt6 found" >&2
 fi
+
+# libimage.so - the data path as a shared library, for the Python bindings
+# (pyimage.py).  GRX ships as a non-PIC static library and cannot go into a
+# shared object, so this is built with -DNOGRX from the sources that do not
+# draw: reading the archive, building the mosaic and writing a GeoTIFF never
+# needed a graphics driver.  apistub.c supplies the few display globals
+# read_cfg() sets regardless.
+echo "building $SOLIB ..."
+LIBSRC="files.c coord.c geotiff.c palette.c archive.c compat.c proj_compat.c apistub.c"
+SOOBJ=.soobj
+rm -rf $SOOBJ && mkdir -p $SOOBJ
+for src in $LIBSRC; do
+    $CC $CFLAGS -DNOGRX -fPIC -I $GRX/include/ -c $src -o $SOOBJ/${src%.c}.o
+done
+# Refuse undefined symbols, so a missing one is a build error here rather
+# than an ImportError in somebody's script.  The flag is spelled differently
+# on Apple's linker - see the case above.
+$CC -shared $SOFLAGS -o $SOLIB $SOOBJ/*.o \
+    -ltiff -lz -lm $PROJ_LIBS $MINIZIP_LIBS
+rm -rf $SOOBJ
 
 echo "done"

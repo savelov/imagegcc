@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            build-essential libx11-dev zlib1g-dev libpng-dev \
+            build-essential libx11-dev zlib1g-dev libpng-dev libtiff-dev \
             libproj-dev libminizip-dev qtbase5-dev qtbase5-dev-tools
 
       - name: Provide the GRX sources
@@ -63,6 +63,12 @@ jobs:
 
       - name: Run the GRX probes
         run: cd tests && GRX=../grx-build ./run-tests.sh
+
+      # Renders the fixture to GeoTIFF and reads every one back: size, palette,
+      # georeferencing, per product no-data byte and the pixels themselves.
+      # Needs no GDAL - tests/geotiff-check.py parses the TIFF directly.
+      - name: GeoTIFF output
+        run: ./tests/geotiff-test.sh
 
       - uses: actions/upload-artifact@v4
         with:

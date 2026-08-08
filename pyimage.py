@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Python bindings for the IMAGE radar compositor.
+
+The C code that gen-bitmap uses to read the archive, mosaic the radars and
+write a GeoTIFF is also built as libimage.so, and this drives it in process
+through ctypes - no subprocess per frame.  It is the same work
+radar-wms/generate_bufr_archive_test.py does through pycao, from the C engine
+instead:
+
+    import pyimage, datetime
+
+    with pyimage.Archive("paths") as ar:
+        frame = ar.nearest(datetime.datetime(2026, 7, 28, 0, 10))
+        frame.load("dbz1")
+
+        for r in frame.radars:                     # feature motion vectors
+            if r.moving:
+                update_vector.update(frame.timestamp, r.name,
+                                     r.speed_kmh / 3.6, r.azimuth_deg,
+                                     r.lat, r.lon)
+
+        info = frame.geotiff("out.tif")            # writes, returns geometry
+        update(frame.timestamp, info["proj4"], info["bbox"], "bufr_dbz1")
+
+libimage.so carries no graphics driver: GRX ships as a non-PIC static library
+and cannot be linked into a shared object, so the library is built from the
+sources that do not draw (see make.sh).  Everything here is therefore data -
+there is no window, no palette allocation and no legend.
+
+One caveat worth knowing: the C engine keeps its state in globals, so an
+Archive is not reentrant.  Use one at a time, and do not thread it.
+"""
+
+import ctypes
+import datetime
+import json
+import os
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+# maps[] is built by init_maps(); these are the map_type values from image.h,
+# which is what map_index() takes.
+MAP_0, MAP_H, MAP_S, MAP_P = 0, 16, 17, 18
+MAP_Q1, MAP_D1, MAP_V1 = 19, 24, 34
+
+#: product name -> map_type.  The names match gen-bitmap's arguments.
+PRODUCTS = {"rain": MAP_P, "top": MAP_H, "phenom": MAP_S}
+for _i in range(16):
+    PRODUCTS["dbz%d" % _i] = MAP_0 + _i
+for _i in range(1, 11):
+    PRODUCTS["zdr%d" % _i] = MAP_D1 + _i - 1
+    PRODUCTS["vel%d" % _i] = MAP_V1 + _i - 1
+for _i, _h in enumerate((1, 3, 6, 12, 24)):
+    PRODUCTS["sum%d" % _h] = MAP_Q1 + _i
+
+
+class ImageError(Exception):
+    pass
+
+
+class _MyFile(ctypes.Structure):
+    """struct MyFile in image.h - one archive frame.
+
+    `flag` is an unsigned __int128 port mask, which ctypes has no type for.
+    Two 64 bit halves hold the same bits, but the alignment does not follow:
+    __int128 aligns to 16, so the five date bytes are followed by eleven of
+    padding and the whole struct is 32 bytes.  Left to itself ctypes would
+    align the halves to 8, make the struct 24, and read every frame after the
+    first from the wrong offset.
+    """
+    _fields_ = [("year", ctypes.c_ubyte), ("month", ctypes.c_ubyte),
+                ("day", ctypes.c_ubyte), ("hour", ctypes.c_ubyte),
+                ("minute", ctypes.c_ubyte),
+                ("_pad", ctypes.c_ubyte * 11),
+                ("flag_lo", ctypes.c_uint64), ("flag_hi", ctypes.c_uint64)]
+
+    @property
+    def ports(self):
+        mask = (self.flag_hi << 64) | self.flag_lo
+        return [p + 1 for p in range(128) if mask >> p & 1]
+
+
+class Radar(object):
+    """One radar's report for a frame, as header.wrk carried it."""
+
+    __slots__ = ("port", "name", "lon", "lat", "speed_kmh", "azimuth_deg")
+
+    def __init__(self, d):
+        self.port = d["port"]
+        self.name = d["name"].strip()
+        self.lon = d["lon"]
+        self.lat = d["lat"]
+        self.speed_kmh = d["speed_kmh"]
+        self.azimuth_deg = d["azimuth_deg"]
+
+    @property
+    def moving(self):
+        """False when the radar reported no feature motion.
+
+        bufr2wrk.py normalises a missing vector to speed 0 with azimuth 511,
+        which is the same test the WMS side makes before storing one.
+        """
+        return self.speed_kmh > 0 and self.azimuth_deg != 511
+
+    def __repr__(self):
+        return ("<Radar port=%d %s %.3fE %.3fN %.0f km/h bearing %d>"
+                % (self.port, self.name, self.lon, self.lat,
+                   self.speed_kmh, self.azimuth_deg))
+
+
+class Frame(object):
+    """One observation time.  `load()` builds the mosaic for a product."""
+
+    def __init__(self, archive, index, stamp, ports):
+        self._archive = archive
+        self.index = index
+        self.timestamp = stamp
+        self.ports = ports
+        self.product = None
+        self._info = None
+
+    def load(self, product):
+        """Read every radar for this frame and mosaic one product."""
+        self._archive._load(self, product)
+        return self
+
+    @property
+    def info(self):
+        """Grid geometry, projection and the radar vectors."""
+        if self._info is None:
+            self._info = self._archive._info()
+        return self._info
+
+    @property
+    def radars(self):
+        return [Radar(r) for r in self.info["radars"]]
+
+    def geotiff(self, path):
+        """Write the mosaic as a GeoTIFF; returns the same dict as `info`."""
+        self._archive._geotiff(path)
+        return self.info
+
+    def __repr__(self):
+        return "<Frame %s ports=%d product=%s>" % (
+            self.timestamp.strftime("%Y-%m-%d %H:%M"),
+            len(self.ports), self.product)
+
+
+class Archive(object):
+    """The archive named by a `paths` file.
+
+    Not reentrant: the C engine keeps one composite in globals, so one Archive
+    at a time and never across threads.
+    """
+
+    _open = None
+
+    def __init__(self, paths="paths", cfg="image.cfg", library=None,
+                 workdir=None):
+        """`paths` names the path file; CFG/GRF/MAP inside it are resolved
+        relative to `workdir`, which defaults to the directory holding it.
+
+        The C engine reads those relative to the process working directory, so
+        the Archive chdirs there for its lifetime and restores on close().  Any
+        relative path a caller passes to geotiff() would resolve against it -
+        pass absolute ones.
+        """
+        if Archive._open is not None:
+            raise ImageError("an Archive is already open - the C engine keeps "
+                             "its state in globals and cannot hold two")
+
+        paths = os.path.abspath(paths)
+        self._cwd = os.getcwd()
+        os.chdir(workdir or os.path.dirname(paths))
+
+        self._lib = self._load_library(library)
+        self._lib.image_api_init()
+
+        # read_cfg() builds maps[] and reads image.cfg; read_dir() scans the
+        # archive; init_files() allocates the passports.  This is the order
+        # main() uses, and none of it may be skipped.
+        self._lib.read_cfg(paths.encode(), cfg.encode())
+        self._lib.read_dir()
+        self._lib.init_files()
+
+        count = ctypes.c_int.in_dll(self._lib, "FilesRead").value
+        if count <= 0:
+            raise ImageError("no frames found - check the MAP line in %s" % paths)
+        files = (_MyFile * count).in_dll(self._lib, "Files")
+
+        self.frames = []
+        for i in range(count):
+            f = files[i]
+            try:
+                stamp = datetime.datetime(2000 + f.year, f.month, f.day,
+                                          f.hour, f.minute)
+            except ValueError:      # a corrupt name in the archive directory
+                continue
+            self.frames.append(Frame(self, i, stamp, f.ports))
+        Archive._open = self
+
+    @staticmethod
+    def _load_library(path):
+        if path is None:
+            # make.sh names it libimage.dll on windows and libimage.so
+            # everywhere else, macOS included - dlopen does not mind the
+            # suffix and this saves the caller knowing which platform it is on
+            for name in ("libimage.so", "libimage.dll", "libimage.dylib"):
+                path = os.path.join(HERE, name)
+                if os.path.exists(path):
+                    break
+        if not os.path.exists(path):
+            raise ImageError("no libimage library in %s - run ./make.sh" % HERE)
+        lib = ctypes.CDLL(path)
+        lib.read_cfg.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        lib.read_files.argtypes = [ctypes.c_int, ctypes.c_int]
+        lib.set_cur_map.argtypes = [ctypes.c_int]
+        lib.map_index.argtypes = [ctypes.c_int]
+        lib.map_index.restype = ctypes.c_int
+        lib.save_geotiff.argtypes = [ctypes.c_char_p]
+        lib.save_geotiff.restype = ctypes.c_int
+        lib.save_info.argtypes = [ctypes.c_char_p]
+        lib.save_info.restype = ctypes.c_int
+        return lib
+
+    def nearest(self, when):
+        """The frame closest to `when`."""
+        if not self.frames:
+            raise ImageError("the archive is empty")
+        return min(self.frames, key=lambda f: abs(f.timestamp - when))
+
+    def between(self, start, end):
+        return [f for f in self.frames if start <= f.timestamp < end]
+
+    # -- the parts that touch the engine's globals ------------------------
+
+    def _load(self, frame, product):
+        try:
+            want = PRODUCTS[product]
+        except KeyError:
+            raise ImageError("unknown product %r - one of %s"
+                             % (product, ", ".join(sorted(PRODUCTS))))
+        # flag 0 loads every product in the frame, which is what makes the
+        # radar vectors and the other levels available afterwards
+        self._lib.read_files(frame.index, 0)
+        self._lib.set_cur_map(want)
+
+        # set_cur_map() falls back to any product the frame does carry, which
+        # is right on a screen and wrong here - the caller asked for one.
+        current = ctypes.c_int.in_dll(self._lib, "current_map").value
+        if current != self._lib.map_index(want):
+            raise ImageError("frame %s carries no %s"
+                             % (frame.timestamp.strftime("%Y-%m-%d %H:%M"),
+                                product))
+        frame.product = product
+        frame._info = None
+        self._current = frame
+
+    def _info(self):
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            if not self._lib.save_info(path.encode()):
+                raise ImageError("could not read the frame metadata")
+            with open(path, encoding="utf-8") as handle:
+                return json.load(handle)
+        finally:
+            os.unlink(path)
+
+    def _geotiff(self, path):
+        path = os.path.abspath(path)          # the engine runs in workdir
+        if not self._lib.save_geotiff(str(path).encode()):
+            raise ImageError("could not write %s" % path)
+
+    # -- lifetime ---------------------------------------------------------
+
+    def close(self):
+        if Archive._open is self:
+            self._lib.de_init_files()
+            os.chdir(self._cwd)
+            Archive._open = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()

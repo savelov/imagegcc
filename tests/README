@@ -125,3 +125,17 @@ Locally:
     printf 'WRK RAB\nMAP tests/data\nCFG config\nGRF config\n' > paths
     ./gen-bitmap time22:00 zdr2
     QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=shot.png ./imageqt time22:00 map1
+
+geotiff-test.sh / geotiff-check.py
+    Renders tests/data to GeoTIFF, one file per product family, and reads each
+    one back: size, colour map, georeferencing, the per product no-data byte
+    and the pixels themselves.  Also checks that the seven come out different
+    and that a product the frame does not carry is refused rather than quietly
+    filled in with another.  Run it from anywhere:
+
+        ./tests/geotiff-test.sh
+        BIN=dist/gen-bitmap ./tests/geotiff-test.sh
+
+    geotiff-check.py parses the TIFF directly - standard library only, so no
+    GDAL is needed on a CI runner.  It writes paths-test rather than paths, to
+    leave the tracked one pointing at the real archive.

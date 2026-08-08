@@ -371,6 +371,8 @@ char temp[80];
 int port_only=0;
 char *wrk_path="paths";
 char *image_cfg="image.cfg";
+char *tiff_path=NULL;
+char *info_path=NULL;
 
 char portcfg[80];
 char fname[80];
@@ -413,6 +415,13 @@ for (i=1;i<argc;i++) {
   else if (!strncmp(argv[i],"time",4)) {
             sscanf(argv[i],"time%2d:%2d",&hrs,&mins);
 	    time=1;
+  } else if (!strncmp(argv[i],"info",4)) {
+     char *eq=strchr(argv[i],'=');
+     info_path = (eq && eq[1]) ? eq+1 : "output.json";
+  } else if (!strncmp(argv[i],"geotiff",7)) {
+     /* geotiff or geotiff=<file>: write the grid rather than a picture */
+     char *eq=strchr(argv[i],'=');
+     tiff_path = (eq && eq[1]) ? eq+1 : "output.tif";
   } else if (!strncmp(argv[i],"movie",5)) sscanf(argv[i],"movie%d",&movie);  //generate movie
 
 }
@@ -457,7 +466,8 @@ if (time) {
 
  grafs=malloc(sizeof(struct info)*MaxTLO);
  if (grafs==NULL) exit(2);
- if (!port_only && !server) set_cur_geogr(2);
+ /* the geotiff carries data, not a picture - no geography on top of it */
+ if (!port_only && !server && !tiff_path) set_cur_geogr(2);
 
 
 do {
@@ -467,6 +477,38 @@ do {
 #else
  read_files(cur_file,1);   // 1-only current file
 #endif
+
+if (info_path && !tiff_path) {
+   int ok;
+   if (maps[current_map].mapid!=want_id) {
+      fprintf(stderr,"this file carries no %s - nothing written to %s\n",
+              maps[map_index(want_id)].filename,info_path);
+      exit(1);
+   }
+   ok=save_info(info_path);
+   de_init_files();
+   free(grafs);
+   exit(ok?0:1);
+}
+
+if (tiff_path) {
+   /* Data out, not a picture: no window, no drawing, no overlay.
+    *
+    * set_cur_map() falls back to any product the file does carry, which is
+    * what you want on screen and not at all what you want in a file named
+    * after the product you asked for.  Say so and write nothing. */
+   int ok;
+   if (maps[current_map].mapid!=want_id) {
+      fprintf(stderr,"this file carries no %s - nothing written to %s\n",
+              maps[map_index(want_id)].filename,tiff_path);
+      exit(1);
+   }
+   ok=save_geotiff(tiff_path);
+   if (ok && info_path) ok=save_info(info_path);
+   de_init_files();
+   free(grafs);
+   exit(ok?0:1);
+}
 
 if (server) {
  out=fopen("locators.js.cp866","w");
