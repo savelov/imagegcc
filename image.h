@@ -192,6 +192,7 @@ extern void walk_table_idw(unsigned char *tb,unsigned char *ntb,unsigned char *t
 extern void walk_table_near(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to,float MapRes,int port,int,int nodata);
 extern void interpolation (unsigned char *ntb,int map_size,int nodata,int noecho,int smooth);
 extern void expand(unsigned char *in,unsigned char _HUGE *out,int mapsize);
+extern void expand_rect(unsigned char *in,unsigned char _HUGE *out,int w,int h);
 extern void expand_heights(unsigned char *in,unsigned char _HUGE *out,int mapsize);
 struct info {
   short type;

@@ -248,7 +248,10 @@ if (vdbg) {
 		if(j<pta[i]) *(vert_array+i+j*MTX)=254;
 		}}
 
-  expand (vert_array,mapbuffer,vert_size);
+  /* MTX by MTY, not MTX by MTX: expand() reads a square, and vert_array holds
+   * MaxVertKm*VertLines rows of vert_size.  At the sizes a long cut produces
+   * that read ran tens of kB past the end of the malloc. */
+  expand_rect (vert_array,mapbuffer,MTX,MTY);
 	for (level=0;level<MaxVertKm*VertLines*2-2;level++)
 	    {
 	    ptr=mapbuffer+level*vert_size*2;
