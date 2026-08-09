@@ -369,7 +369,12 @@ int max_down=MSIZE/2-WINDOW_YSIZE/MPIX/2-1;
 #ifdef QTGUI
 int image_init(int argc,char *argv[]) {
 #else
-void main(int argc,char *argv[]) {
+/* This was void main, which TurboC allowed and which leaves the exit status
+ * to whatever happens to be in the return register when the function falls
+ * off its end.  x86-64 had 0 there; aarch64 had 80, so every render that
+ * finished normally - rather than through one of the exit(0) paths - looked
+ * like a failure on Linux ARM the first time anything checked. */
+int main(int argc,char *argv[]) {
 #endif
 char temp[80];
 int port_only=0;
@@ -625,12 +630,11 @@ if (movie>0) {
 
 } while (movie>0);
 
-#ifdef QTGUI
- return 0;
-#else
+#ifndef QTGUI
  close_graph();
  free(grafs);
  de_init_files();
 #endif
 
+ return 0;
  }

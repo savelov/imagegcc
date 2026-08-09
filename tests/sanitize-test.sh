@@ -49,7 +49,9 @@ run() {
         fi
     else
         echo "FAIL (exit $?)"
-        tail -25 "$LOG"
+        # From the top: a sanitizer report puts what happened on its first
+        # line and the stack under it, so tailing the log hides the answer.
+        head -40 "$LOG"
         rc=1
     fi
 }
