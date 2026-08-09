@@ -56,7 +56,12 @@ float           rtt[MaxPorts],rkk;
 int             level,ii;
 int             box_size;
 int             port;
-int             k,k1,k2,ny;
+/* ny is only assigned when some port comes out nearer than the 10000 rkk
+ * starts at.  A NaN distance makes every comparison false and left it holding
+ * whatever was on the stack, which then indexed sintet1[] and HMRL[]. */
+int             k,k1,k2,ny=0;
+int             nlev=0,kmin=MaxVertKm*VertLines,kmax=-1,filled=0;
+const char     *vdbg=getenv("VERT_DEBUG");
 unsigned char   flag;
 unsigned char   dol,gora;
 unsigned char   v_gora,v_dol;
@@ -152,6 +157,12 @@ for(i=0; i<MaxVertWidth; i++) pta[i]=0;
 
 /* printf("\n l=%i k=%i",level,k);*/
 	 if (k>=MaxVertKm*VertLines) continue;  /* too high ... */
+	 /* k is a row of vert_array, taken from the height in the product
+	  * header.  Only the top was ever checked, so a header that gives a
+	  * negative height aimed ptr before the buffer and the fill below wrote
+	  * there. */
+	 if (k<0) continue;                     /* ... or below the ground */
+	 nlev++; if (k<kmin) kmin=k; if (k>kmax) kmax=k;
 	 ptr=vert_array+k*vert_size;
 			 for (i=0,x=x1,y=y1,countx=0,county=0;table[i]<vert_size && i<MaxVertSize;
 			       countx+=delta_x,county+=delta_y,i++)
@@ -206,6 +217,23 @@ for(i=0; i<MaxVertWidth; i++) pta[i]=0;
     box_size=WINDOW_XSIZE/(vert_size);
   //    box_size=(int)hii;
 	/*	printf("\n box=%i",box_size);*/
+
+/* VERT_DEBUG=1 says what was computed and where it is about to be drawn.  A
+ * section that comes out blank is either empty (no level contributed), the
+ * wrong colour, or off the window, and these three lines tell which. */
+if (vdbg) {
+   for (i=0;i<MTX*MTY;i++) if (vert_array[i]!=c254) filled++;
+   printf("\nvert: window %dx%d  vert_size=%d box=%d MTX=%d MTY=%d\n",
+          WINDOW_XSIZE,WINDOW_YSIZE,vert_size,box_size,MTX,MTY);
+   printf("vert: %d level(s) filled rows %d..%d, %d of %d cells set\n",
+          nlev,nlev?kmin:-1,kmax,filled,MTX*MTY);
+   printf("vert: boxes x %d..%d y %d..%d  (DownY=%d, screen %dx%d)\n",
+          LeftX,LeftX+box_size/2*(MaxHorizLine/box_size*2),
+          DownY-(MaxVertKm*VertLines*2-2)*box_size/2,DownY,
+          DownY,GrScreenX(),GrScreenY());
+   fflush(stdout);
+}
+
  solid_bar(LeftX-30,1,LeftX+MaxHorizLine,WINDOW_YSIZE+20,0);   /* clear screen */
 
 	for(i=0; i<MTX; i++)
