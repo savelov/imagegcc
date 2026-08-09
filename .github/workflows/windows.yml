@@ -6,8 +6,10 @@ name: windows
 
 on:
   push:
+    branches: ['**']      # tags go through release.yml, which calls this
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   mingw64:

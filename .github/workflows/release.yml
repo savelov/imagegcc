@@ -1,0 +1,79 @@
+name: release
+
+# Push a v tag and the three platform builds run and hang their bundles on a
+# GitHub release for that tag:
+#
+#     git tag v1.0 && git push origin v1.0
+#
+# The builds are the same workflows that run on every branch push, called
+# rather than copied - a release must ship what CI has been testing, not a
+# second recipe that drifts from it.  That is also why those three now say
+# branches: '**' on their push trigger: without it a tag would build each of
+# them twice, once directly and once through here.
+#
+# linux.yml is left out on purpose.  A glibc build is only good on the
+# distribution that made it, so there is nothing useful to attach; on Linux,
+# build from source.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write         # to create the release and upload to it
+
+jobs:
+  macos:
+    uses: ./.github/workflows/macos.yml
+  windows:
+    uses: ./.github/workflows/windows.yml
+  windows-arm64:
+    uses: ./.github/workflows/windows-arm64.yml
+
+  publish:
+    needs: [macos, windows, windows-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      # A called workflow shares the run, so every bundle the three jobs
+      # uploaded is here, one directory per artifact name.
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Lay out the release files
+        run: |
+          set -e
+          ls -R artifacts
+          mkdir -p release
+
+          # macOS ships as a tarball already, and has to: GitHub's artifact
+          # zip drops the executable bits and dereferences the symlinks in a
+          # Qt .framework, which breaks the ad-hoc signature the bundle is
+          # loaded with.  Keep the note about com.apple.quarantine with it.
+          cp artifacts/imagegcc-macos-*/imagegcc-macos-*.tar.gz release/
+          cp artifacts/imagegcc-macos-*/HOW-TO-RUN.txt \
+             release/HOW-TO-RUN-macos.txt
+
+          # Windows has no such problem, and a zip is what a Windows user
+          # expects to download, so the dist tree is zipped here.
+          (cd artifacts/imagegcc-windows-x86_64 \
+             && zip -qr ../../release/imagegcc-windows-x64.zip .)
+          (cd artifacts/imagegcc-windows-arm64 \
+             && zip -qr ../../release/imagegcc-windows-arm64.zip .)
+
+          ls -l release
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          # Re-running the job for a tag that already has a release should
+          # replace the files rather than fail on the create.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+          else
+            gh release create "$TAG" release/* \
+              --title "$TAG" --generate-notes
+          fi
