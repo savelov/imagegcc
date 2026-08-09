@@ -8,6 +8,12 @@
 #define VertLines 4      /* lines per 1 vertical km */
 #define MaxBoxSize 16     /* MaxVertKm*VertLines*MaxBoxSize <= DownY-15 !!!!*/
 #define MaxVertSize WINDOW_YSIZE/2  /* do not change!!! */
+/* pta is indexed by tab[i], a column of the section, and vert_size below can
+ * reach WINDOW_XSIZE/2 - so it is the width of the window that bounds it, not
+ * MaxVertSize.  On any landscape window the two differ, and pta used to be the
+ * short one.  The slack covers the gap scan near the end, which looks up to
+ * pta[i+6]. */
+#define MaxVertWidth (WINDOW_XSIZE/2+8)
 #define MaxVertKm 12
 #define MTX vert_size
 #define MTY MaxVertKm*VertLines
@@ -37,7 +43,7 @@ int             delta,delta_x,delta_y;
 int             countx,county;
 int             x,y,vi;
 unsigned char   *vert_array,*ptr;
-unsigned char   pta[MaxVertSize];
+unsigned char   pta[MaxVertWidth];
 float           r,delta_r;
 int             vert_size;
 unsigned char   table[MaxVertSize];
@@ -58,7 +64,11 @@ float           fpom,bpom;
 char            number[20];
 
 
-for(i=0; i<=MaxVertSize; i++) {table[i]=0; tab[i]=0; pta[i]=0;}
+/* These are variable length arrays, so one past the end is not spare padding
+ * the way it may be for a fixed array - it is whatever the compiler put next
+ * in the frame, and aarch64 does not put the same thing there as x86-64. */
+for(i=0; i<MaxVertSize; i++) {table[i]=0; tab[i]=0;}
+for(i=0; i<MaxVertWidth; i++) pta[i]=0;
 				for(port=0;port<MaxPorts; port++)
 				{
 				sintet1[port]=sin(naa[port]);
