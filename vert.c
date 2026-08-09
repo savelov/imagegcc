@@ -8,6 +8,12 @@
 #define VertLines 4      /* lines per 1 vertical km */
 #define MaxBoxSize 16     /* MaxVertKm*VertLines*MaxBoxSize <= DownY-15 !!!!*/
 #define MaxVertSize WINDOW_YSIZE/2  /* do not change!!! */
+/* pta is indexed by tab[i], a column of the section, and vert_size below can
+ * reach WINDOW_XSIZE/2 - so it is the width of the window that bounds it, not
+ * MaxVertSize.  On any landscape window the two differ, and pta used to be the
+ * short one.  The slack covers the gap scan near the end, which looks up to
+ * pta[i+6]. */
+#define MaxVertWidth (WINDOW_XSIZE/2+8)
 #define MaxVertKm 12
 #define MTX vert_size
 #define MTY MaxVertKm*VertLines
@@ -37,11 +43,11 @@ int             delta,delta_x,delta_y;
 int             countx,county;
 int             x,y,vi;
 unsigned char   *vert_array,*ptr;
-unsigned char   pta[MaxVertSize];
+unsigned char   pta[MaxVertWidth];
 float           r,delta_r;
 int             vert_size;
-unsigned char   table[MaxVertSize];
 int             tab[MaxVertSize];
+int             line_len;
 int             i,j;
 //extern int      masx[MaxPorts];
 //extern int      masy[MaxPorts];
@@ -50,7 +56,12 @@ float           rtt[MaxPorts],rkk;
 int             level,ii;
 int             box_size;
 int             port;
-int             k,k1,k2,ny;
+/* ny is only assigned when some port comes out nearer than the 10000 rkk
+ * starts at.  A NaN distance makes every comparison false and left it holding
+ * whatever was on the stack, which then indexed sintet1[] and HMRL[]. */
+int             k,k1,k2,ny=0;
+int             nlev=0,kmin=MaxVertKm*VertLines,kmax=-1,filled=0;
+const char     *vdbg=getenv("VERT_DEBUG");
 unsigned char   flag;
 unsigned char   dol,gora;
 unsigned char   v_gora,v_dol;
@@ -58,7 +69,11 @@ float           fpom,bpom;
 char            number[20];
 
 
-for(i=0; i<=MaxVertSize; i++) {table[i]=0; tab[i]=0; pta[i]=0;}
+/* These are variable length arrays, so one past the end is not spare padding
+ * the way it may be for a fixed array - it is whatever the compiler put next
+ * in the frame, and aarch64 does not put the same thing there as x86-64. */
+for(i=0; i<MaxVertSize; i++) tab[i]=0;
+for(i=0; i<MaxVertWidth; i++) pta[i]=0;
 				for(port=0;port<MaxPorts; port++)
 				{
 				sintet1[port]=sin(naa[port]);
@@ -84,11 +99,14 @@ for(i=0; i<=MaxVertSize; i++) {table[i]=0; tab[i]=0; pta[i]=0;}
 	 printf("\n delta=%i",delta);
    r=sqrt((float)delta_x*delta_x+(float)delta_y*delta_y);
   if (delta) delta_r=r/delta; else delta_r=0;
-	for (i=0;i<MaxVertSize;i++) {table[i]=i*delta_r+.5;tab[i]=i*delta_r+.5;}
-	/*	 printf("\n tab=%i",table[delta]);*/
+	for (i=0;i<MaxVertSize;i++) tab[i]=i*delta_r+.5;
+	/* tab[delta], which is the length of the cut - but delta counts grid
+	 * cells and tab[] is only MaxVertSize long, so a cut wider than the
+	 * array read past its end.  It is the same arithmetic without it. */
+	line_len=delta*delta_r+.5;
   vert_size=WINDOW_XSIZE/MaxBoxSize;
   for (i=MaxBoxSize;i>2;i--)
-   if (table[delta]>=MaxHorizLine/i)
+   if (line_len>=MaxHorizLine/i)
 	 vert_size=WINDOW_XSIZE/(i-1);
 	 printf("\n vert_s=%i",vert_size);
 	vert_array=malloc(vert_size*MaxVertKm*VertLines+500);
@@ -142,8 +160,14 @@ for(i=0; i<=MaxVertSize; i++) {table[i]=0; tab[i]=0; pta[i]=0;}
 
 /* printf("\n l=%i k=%i",level,k);*/
 	 if (k>=MaxVertKm*VertLines) continue;  /* too high ... */
+	 /* k is a row of vert_array, taken from the height in the product
+	  * header.  Only the top was ever checked, so a header that gives a
+	  * negative height aimed ptr before the buffer and the fill below wrote
+	  * there. */
+	 if (k<0) continue;                     /* ... or below the ground */
+	 nlev++; if (k<kmin) kmin=k; if (k>kmax) kmax=k;
 	 ptr=vert_array+k*vert_size;
-			 for (i=0,x=x1,y=y1,countx=0,county=0;table[i]<vert_size && i<MaxVertSize;
+			 for (i=0,x=x1,y=y1,countx=0,county=0;tab[i]<vert_size && i<MaxVertSize;
 			       countx+=delta_x,county+=delta_y,i++)
 	   {
        if (countx>=delta) {
@@ -156,7 +180,7 @@ for(i=0; i<=MaxVertSize; i++) {table[i]=0; tab[i]=0; pta[i]=0;}
 	 y+=incy;
 	 if (y>=MSIZE_int) break;
 			  }
-      ptr[table[i]]=*(maps[level].bufdata+(long)y*MSIZE_int+x);
+      ptr[tab[i]]=*(maps[level].bufdata+(long)y*MSIZE_int+x);
 
 	   }
 
@@ -196,6 +220,23 @@ for(i=0; i<=MaxVertSize; i++) {table[i]=0; tab[i]=0; pta[i]=0;}
     box_size=WINDOW_XSIZE/(vert_size);
   //    box_size=(int)hii;
 	/*	printf("\n box=%i",box_size);*/
+
+/* VERT_DEBUG=1 says what was computed and where it is about to be drawn.  A
+ * section that comes out blank is either empty (no level contributed), the
+ * wrong colour, or off the window, and these three lines tell which. */
+if (vdbg) {
+   for (i=0;i<MTX*MTY;i++) if (vert_array[i]!=c254) filled++;
+   printf("\nvert: window %dx%d  vert_size=%d box=%d MTX=%d MTY=%d\n",
+          WINDOW_XSIZE,WINDOW_YSIZE,vert_size,box_size,MTX,MTY);
+   printf("vert: %d level(s) filled rows %d..%d, %d of %d cells set\n",
+          nlev,nlev?kmin:-1,kmax,filled,MTX*MTY);
+   printf("vert: boxes x %d..%d y %d..%d  (DownY=%d, screen %dx%d)\n",
+          LeftX,LeftX+box_size/2*(MaxHorizLine/box_size*2),
+          DownY-(MaxVertKm*VertLines*2-2)*box_size/2,DownY,
+          DownY,GrScreenX(),GrScreenY());
+   fflush(stdout);
+}
+
  solid_bar(LeftX-30,1,LeftX+MaxHorizLine,WINDOW_YSIZE+20,0);   /* clear screen */
 
 	for(i=0; i<MTX; i++)
@@ -210,7 +251,10 @@ for(i=0; i<=MaxVertSize; i++) {table[i]=0; tab[i]=0; pta[i]=0;}
 		if(j<pta[i]) *(vert_array+i+j*MTX)=254;
 		}}
 
-  expand (vert_array,mapbuffer,vert_size);
+  /* MTX by MTY, not MTX by MTX: expand() reads a square, and vert_array holds
+   * MaxVertKm*VertLines rows of vert_size.  At the sizes a long cut produces
+   * that read ran tens of kB past the end of the malloc. */
+  expand_rect (vert_array,mapbuffer,MTX,MTY);
 	for (level=0;level<MaxVertKm*VertLines*2-2;level++)
 	    {
 	    ptr=mapbuffer+level*vert_size*2;

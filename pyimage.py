@@ -28,8 +28,11 @@ and cannot be linked into a shared object, so the library is built from the
 sources that do not draw (see make.sh).  Everything here is therefore data -
 there is no window, no palette allocation and no legend.
 
-One caveat worth knowing: the C engine keeps its state in globals, so an
-Archive is not reentrant.  Use one at a time, and do not thread it.
+Two caveats worth knowing.  The C engine keeps its state in globals, so an
+Archive is not reentrant - use one at a time, and do not thread it.  And it
+reports a broken config by calling exit(), which ends the host process rather
+than raising: Archive checks what it can beforehand, but a config/image.cfg
+that is missing or malformed will still take the script down with it.
 """
 
 import ctypes
@@ -172,33 +175,51 @@ class Archive(object):
                              "its state in globals and cannot hold two")
 
         paths = os.path.abspath(paths)
+        workdir = workdir or os.path.dirname(paths)
+        # os.chdir would raise a bare FileNotFoundError naming only the
+        # directory, which is a puzzle when the caller never mentioned one
+        if not os.path.isfile(paths):
+            raise ImageError("no path file at %s - pass paths=..., or set "
+                             "IMAGE_HOME to the imagegcc checkout" % paths)
+        if not os.path.isdir(workdir):
+            raise ImageError("%s does not exist; it is where %s lives and "
+                             "where CFG/GRF/MAP inside it are resolved from"
+                             % (workdir, os.path.basename(paths)))
         self._cwd = os.getcwd()
-        os.chdir(workdir or os.path.dirname(paths))
+        os.chdir(workdir)
 
-        self._lib = self._load_library(library)
-        self._lib.image_api_init()
+        # from here on the process is somewhere else; put it back if any of
+        # this throws, or the caller is left in a directory it never chose
+        try:
 
-        # read_cfg() builds maps[] and reads image.cfg; read_dir() scans the
-        # archive; init_files() allocates the passports.  This is the order
-        # main() uses, and none of it may be skipped.
-        self._lib.read_cfg(paths.encode(), cfg.encode())
-        self._lib.read_dir()
-        self._lib.init_files()
+            self._lib = self._load_library(library)
+            self._lib.image_api_init()
 
-        count = ctypes.c_int.in_dll(self._lib, "FilesRead").value
-        if count <= 0:
-            raise ImageError("no frames found - check the MAP line in %s" % paths)
-        files = (_MyFile * count).in_dll(self._lib, "Files")
+            # read_cfg() builds maps[] and reads image.cfg; read_dir() scans the
+            # archive; init_files() allocates the passports.  This is the order
+            # main() uses, and none of it may be skipped.
+            self._lib.read_cfg(paths.encode(), cfg.encode())
+            self._lib.read_dir()
+            self._lib.init_files()
 
-        self.frames = []
-        for i in range(count):
-            f = files[i]
-            try:
-                stamp = datetime.datetime(2000 + f.year, f.month, f.day,
-                                          f.hour, f.minute)
-            except ValueError:      # a corrupt name in the archive directory
-                continue
-            self.frames.append(Frame(self, i, stamp, f.ports))
+            count = ctypes.c_int.in_dll(self._lib, "FilesRead").value
+            if count <= 0:
+                raise ImageError("no frames found - check the MAP line in %s" % paths)
+            files = (_MyFile * count).in_dll(self._lib, "Files")
+
+            self.frames = []
+            for i in range(count):
+                f = files[i]
+                try:
+                    stamp = datetime.datetime(2000 + f.year, f.month, f.day,
+                                              f.hour, f.minute)
+                except ValueError:      # a corrupt name in the archive directory
+                    continue
+                self.frames.append(Frame(self, i, stamp, f.ports))
+        except Exception:
+            os.chdir(self._cwd)
+            raise
+
         Archive._open = self
 
     @staticmethod

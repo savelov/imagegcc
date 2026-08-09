@@ -528,19 +528,22 @@ int v[4];
  }
 }
 
-void expand(unsigned char _HUGE *in,unsigned char _HUGE *out,int mapsiz) {
+/* Double a w by h array into a 2w by 2h one.  expand() below is this with a
+ * square array, which is what a product grid is - the vertical section is not,
+ * and calling expand() for it read h*h bytes out of a buffer holding w*h. */
+void expand_rect(unsigned char _HUGE *in,unsigned char _HUGE *out,int w,int h) {
 int i,j;
 unsigned char _HUGE *inptr;
 unsigned char _HUGE *outptr;
-int mapsize2=mapsiz*2;
+int mapsize2=w*2;
 //int k;
 //unsigned char current,prev;
 int current,prev;
 
   inptr=in;
   outptr=out;
-  for (i=0;i<mapsiz;i++) {
-	  for (j=0;j<mapsiz;j++) {
+  for (i=0;i<h;i++) {
+	  for (j=0;j<w;j++) {
           	  current=*inptr++;
                   *(outptr+mapsize2)=current;
                   *outptr++=current;
@@ -550,6 +553,10 @@ int current,prev;
      outptr+=mapsize2;
   }
 
+}
+
+void expand(unsigned char _HUGE *in,unsigned char _HUGE *out,int mapsiz) {
+  expand_rect(in,out,mapsiz,mapsiz);
 }
 
 void expand_heights(unsigned char _HUGE *in,unsigned char _HUGE *out,int mapsiz) {

@@ -313,11 +313,42 @@ jobs:
           path: renders
           if-no-files-found: warn
 
+      # The bundle ships as a tarball, not as the directory.  GitHub zips an
+      # uploaded tree, and that zip drops the executable bits, dereferences
+      # symlinks (a Qt .framework is mostly symlinks) and thereby breaks the
+      # ad-hoc signature - which on Apple silicon is not a warning, the binary
+      # is killed on load.  tar keeps modes, links and the signed bytes, so
+      # what the user unpacks is what was tested here.
+      - name: Pack the bundle
+        if: always()
+        run: |
+          set -e
+          NAME=imagegcc-macos-${{ runner.arch }}
+          tar czf "$NAME.tar.gz" dist
+          cat > HOW-TO-RUN.txt <<EOF
+          Unpack, then clear the quarantine flag the browser set on the
+          download.  The bundle is ad-hoc signed, not notarized, so without
+          this Gatekeeper refuses to open it:
+
+              tar xzf $NAME.tar.gz
+              xattr -dr com.apple.quarantine dist
+              open dist/imageqt.app
+
+          The command line tools run from the same directory:
+
+              dist/gen-bitmap time22:00 map1
+
+          imagegcc needs a real X11 display (XQuartz); the other two do not.
+          EOF
+          ls -l "$NAME.tar.gz"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: imagegcc-macos-${{ runner.arch }}
-          path: dist
+          path: |
+            imagegcc-macos-${{ runner.arch }}.tar.gz
+            HOW-TO-RUN.txt
           if-no-files-found: error
 
       # --- would it run on a Mac without Homebrew? -----------------------

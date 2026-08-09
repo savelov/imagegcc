@@ -460,7 +460,22 @@ if (time) {
         if (lastflag && Files[cur_file].FileMinute%10==0) break;
         lastflag=1;     //find previous
   }
-} 
+}
+
+/* Every search above ends at -1 when it matches nothing, and Files[-1] then
+ * reads whatever precedes the array: zeroed date fields and a flag word with
+ * every port bit set, so read_files() went looking for 00000000.00m in all 32
+ * port directories.  An asked-for time that is not in the archive is the
+ * user's mistake and worth saying out loud; the searches that only express a
+ * preference - newest whole ten minutes, previous frame of one port - fall
+ * back to the newest frame rather than to nothing. */
+if (cur_file < 0) {
+  if (time) {
+    printf("\n\aNo frame at %02d:%02d in %s\n",hrs,mins,mapdir);
+    exit(1);
+  }
+  cur_file=FilesRead-1;
+}
 
  init_files();
 
