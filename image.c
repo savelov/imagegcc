@@ -16,6 +16,10 @@ int Second=10;
 int xck,yck,xc2,yc2;
 int xco,yco,xco1,xco2,yco1,yco2;
 int flagl=0,flagv=0,flago=0, flaga=0;
+/* cross=x1,y1,x2,y2 asked for a vertical section and nothing else.  The batch
+ * surface is the width of the legend column, which the section does not fit
+ * in, so init_graph() needs to know before it sets the mode. */
+int batch_cross=0;
 /*int xc1,yc1;*/
 int ot;
 int xc1=240;
@@ -373,6 +377,8 @@ char *wrk_path="paths";
 char *image_cfg="image.cfg";
 char *tiff_path=NULL;
 char *info_path=NULL;
+char *cross_path="cross.png";
+int cx1=0,cy1=0,cx2=0,cy2=0;
 
 char portcfg[80];
 char fname[80];
@@ -418,6 +424,15 @@ for (i=1;i<argc;i++) {
   } else if (!strncmp(argv[i],"info",4)) {
      char *eq=strchr(argv[i],'=');
      info_path = (eq && eq[1]) ? eq+1 : "output.json";
+  } else if (!strncmp(argv[i],"cross",5)) {
+     /* cross=x1,y1,x2,y2: draw the vertical section between two product grid
+      * cells and write it out.  vert() was reachable only by clicking twice
+      * on the map, so nothing headless ever ran a line of it - which is how
+      * an overread of tens of kB in it survived years of CI. */
+     if (sscanf(argv[i],"cross=%d,%d,%d,%d",&cx1,&cy1,&cx2,&cy2)==4)
+        batch_cross=1;
+     else
+        printf("\ncross wants cross=x1,y1,x2,y2 - ignored\n");
   } else if (!strncmp(argv[i],"geotiff",7)) {
      /* geotiff or geotiff=<file>: write the grid rather than a picture */
      char *eq=strchr(argv[i],'=');
@@ -553,6 +568,23 @@ if (server) {
  if (init_graph(temp)!=0) { exit(1); }
 
  draw_map(movie>0?0:1);
+
+ /* GRX is on its memory driver in the batch build, so vert() draws into the
+  * surface with no window anywhere and the result can be saved.  Same palette
+  * the interactive path sets before it calls vert(). */
+ if (batch_cross) {
+    set_palette("reflectivity",maps[map_index(MAP_1)].nodata);
+    vert(cx1,cy1,cx2,cy2);
+    /* GrSaveContextToPng answers 0 for success, -1 for failure */
+    if (GrSaveContextToPng(GrCurrentContext(),cross_path)!=0) {
+       printf("\ncannot write %s\n",cross_path);
+       exit(1);
+    }
+    printf("\nwrote %s\n",cross_path);
+    de_init_files();
+    free(grafs);
+    exit(0);
+ }
 
 
 #if defined(QTGUI)

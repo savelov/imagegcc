@@ -63,6 +63,15 @@ else
 fi
 CFLAGS="-g -std=gnu89 $PERMISSIVE -fcommon"
 
+# SAN=1 adds AddressSanitizer and UndefinedBehaviorSanitizer, for
+# tests/sanitize-test.sh.  -fno-sanitize-recover=all turns a UB report into a
+# non-zero exit: undefined behaviour that only prints is undefined behaviour
+# nobody reads.
+if [ -n "${SAN:-}" ]; then
+    CFLAGS="$CFLAGS -fsanitize=address,undefined -fno-sanitize-recover=all"
+    CFLAGS="$CFLAGS -fno-omit-frame-pointer"
+fi
+
 SRC="image.c showmap.c coord.c showdata.c files.c grafs.c archive.c window.c
      vert.c crosssect.c palette.c geotiff.c compat.c proj_compat.c"
 
@@ -99,6 +108,15 @@ $CC $CFLAGS      -o gen-bitmap -I $GRX/include/ $SRC $LIBS
 
 echo "building imagegcc ..."
 $CC $CFLAGS -DGUI -o imagegcc  -I $GRX/include/ $SRC $LIBS
+
+# The sanitizer build stops at the two batch targets.  libimage.so refuses
+# undefined symbols on purpose and the sanitizer runtime is exactly that in a
+# shared object; imageqt would double the build for a path the fixture cannot
+# drive without a display anyway.
+if [ -n "${SAN:-}" ]; then
+    echo "SAN build: gen-bitmap and imagegcc only"
+    exit 0
+fi
 
 # imageqt: same drawing code, but rendered into memory and shown by Qt.
 # Qt6 first, then Qt5 - MSYS2 ships only Qt6 for CLANGARM64, while the

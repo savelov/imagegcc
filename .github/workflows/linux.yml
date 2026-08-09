@@ -80,3 +80,13 @@ jobs:
             config/
             paths
           if-no-files-found: error
+
+      # The same fixture again, under AddressSanitizer and UBSan, including
+      # the vertical section through cross= - which until now nothing but a
+      # mouse click could reach, so it held a 25 kB overread that only
+      # Windows was unlucky enough to fault on.
+      #
+      # Last, deliberately: it rebuilds gen-bitmap and imagegcc with the
+      # sanitizers, and those are not the binaries the artifact should carry.
+      - name: Sanitizers
+        run: GRX=grx-build ./tests/sanitize-test.sh
