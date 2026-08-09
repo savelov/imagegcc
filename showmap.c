@@ -266,6 +266,7 @@ static void draw_cross_line(void)
 int init_graph(char *palette_file) {
 int i;
 int svga;
+int bw,bh;                /* the batch surface, see the #else branch below */
 GrContext * context;
 
 
@@ -300,10 +301,14 @@ GrContext * context;
       fprintf(logfile,"Can't select the GRX memory driver\n");
       exit(1);
    }
-   if (!GrSetMode(GR_width_height_color_graphics,
-                  WINDOW_LEFT,WINDOW_UP+WINDOW_YSIZE,256*256*256L)) {
-      fprintf(logfile,"Can't set a %dx%d truecolor memory mode\n",
-              WINDOW_LEFT,WINDOW_UP+WINDOW_YSIZE);
+   /* The batch surface is only as wide as the legend column, because that is
+    * all the batch path draws on it - the map goes to RamContext.  A vertical
+    * section does not: vert() paints across the whole window, out to
+    * LeftX+MaxHorizLine, so cross= needs room for it. */
+   bw=batch_cross ? WINDOW_LEFT+WINDOW_XSIZE+8 : WINDOW_LEFT;
+   bh=WINDOW_UP+WINDOW_YSIZE+(batch_cross?24:0);
+   if (!GrSetMode(GR_width_height_color_graphics,bw,bh,256*256*256L)) {
+      fprintf(logfile,"Can't set a %dx%d truecolor memory mode\n",bw,bh);
       exit(1);
    }
 #endif

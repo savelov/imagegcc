@@ -9,6 +9,25 @@
 #endif
 #include "proj_compat.h"
 
+/* The packed coordinate tables put a byte count in front of each short, so
+ * every short in them sits at an odd address.  Reading one through a short *
+ * is undefined - x86 does not care and aarch64 mostly does not either, but
+ * the compiler is entitled to assume the alignment it was promised, and
+ * -fsanitize=undefined reported every one of these.  memcpy says what is
+ * meant and compiles to the same instruction. */
+static int get_short(const unsigned char *p)
+{
+   short v;
+   memcpy(&v,p,sizeof v);
+   return v;
+}
+
+static void put_short(unsigned char *p,int v)
+{
+   short s=(short)v;
+   memcpy(p,&s,sizeof s);
+}
+
 #define MaxPortTables MaxPorts
 
 //TODO - calculate center and fix 54/100 lat/lon
@@ -107,12 +126,12 @@ unsigned char value;
 
 	 if (!countx) {
 		countx=*in_ptr++;
-		x=*(short *)in_ptr;
+		x=get_short(in_ptr);
 	        in_ptr+=sizeof(short);
 	 }
 	 if (!county) {
 		county=*in_ptr++;
-		y=*(short *)in_ptr;
+		y=get_short(in_ptr);
 	        in_ptr+=sizeof(short);
 	 }
 
@@ -146,7 +165,7 @@ unsigned char *out_ptr=packed_table,*save_xptr,*save_yptr;
   for(i=1;i<size_from*size_from;i++) {
 		if (*in_ptr!=x++ || (x-save_x-1)>254) {    /* make sure, but really never >size_from */
 	 *save_xptr++=x-save_x-1;
-	 *((short *)save_xptr)=save_x;
+	 put_short(save_xptr,save_x);
 	 save_x=*in_ptr;
 	 x=save_x+1;
 	 save_xptr=out_ptr++; out_ptr+=sizeof(short);
@@ -156,7 +175,7 @@ unsigned char *out_ptr=packed_table,*save_xptr,*save_yptr;
 		count_y++;
 		if (*in_ptr!=y || count_y>254) {
 	 *save_yptr++=count_y;
-	 *((short *)save_yptr)=y;
+	 put_short(save_yptr,y);
 	 y=*in_ptr;
 	 count_y=0;
 	 save_yptr=out_ptr++; out_ptr+=sizeof(short);
@@ -164,9 +183,9 @@ unsigned char *out_ptr=packed_table,*save_xptr,*save_yptr;
 		in_ptr++;
   }
   *save_xptr++=x-save_x;
-  *(short *)save_xptr=save_x;
+  put_short(save_xptr,save_x);
   *save_yptr++=count_y+1;
-  *(short *)save_yptr=y;
+  put_short(save_yptr,y);
 
   check_table(table,packed_table,size_from);
 
@@ -303,11 +322,11 @@ unsigned int ytab;
 		 for (xtab=0;xtab<size_from; xtab++) {
     if (!countx) {
       countx=*in++;
-      x=*((short *)in); in+=sizeof(short);
+      x=get_short(in); in+=sizeof(short);
     }
     if (!county) {
       county=*in++;
-      y=*((short *)in); in+=sizeof(short);
+      y=get_short(in); in+=sizeof(short);
     }
 		if((xtab==49)&&(ytab==49)) {masx[port]=x; masy[port]=y; }
 		tb_ptr++;
@@ -333,12 +352,12 @@ unsigned char value;
   for (i=0;i<size_from*size_from;i++) {
 	 if (!countx) {
 		countx=*in_ptr++;
-		x=*(short *)in_ptr;
+		x=get_short(in_ptr);
 	        in_ptr+=sizeof(short);
 	 }
 	 if (!county) {
 		county=*in_ptr++;
-		y=*(short *)in_ptr;
+		y=get_short(in_ptr);
 	        in_ptr+=sizeof(short);
 	 }
 	 if (*tb_ptr!=nodata && x!=-1 && y!=-1) {
@@ -375,12 +394,12 @@ double rt,rk,r;
 	 for (xtab=0;xtab<size_from; xtab++) {
     if (!countx) {
 	countx=*in++;
-	x=*((short *)in);
+	x=get_short(in);
 	in+=sizeof(short);
     }
     if (!county) {
 	county=*in++;
-	y=*((short *)in);
+	y=get_short(in);
 	in+=sizeof(short);
     }
     if (*tb!=nodata && x!=-1 && y!=-1) {
@@ -427,7 +446,7 @@ double r[MaxPorts],rt,rmin,vt,rk;
       //	countx=*tbl_ptr++;
       //	x=*((short *)tbl_ptr)++;
      	countx=*in++;
-	x=*((short *)in);
+	x=get_short(in);
 	in+=sizeof(short);
 
 		 }
@@ -435,7 +454,7 @@ double r[MaxPorts],rt,rmin,vt,rk;
        //	county=*tbl_ptr++;
        //	y=*((short *)tbl_ptr)++;
         county=*in++;
-	y=*((short *)in);
+	y=get_short(in);
 	in+=sizeof(short);
 
 		 }

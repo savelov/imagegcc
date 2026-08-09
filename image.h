@@ -169,6 +169,7 @@ extern void update_coords(void);
 extern void message_loop(void);
 extern int message_poll(void);
 extern int init_graph(char *palette_file);
+extern int batch_cross;    /* cross=... : the batch surface has to fit vert() */
 extern void close_graph(void);
 extern int draw_map(int vectors);
 extern void outtextxy(int x,int y,char *text);
