@@ -67,6 +67,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          # This job only downloads artifacts, so there is no checkout and no
+          # git remote for gh to read the repository from.  Name it instead -
+          # cloning the sources just to publish files would be a poor trade.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -e
           # Re-running the job for a tag that already has a release should
