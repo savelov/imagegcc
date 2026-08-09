@@ -46,8 +46,8 @@ unsigned char   *vert_array,*ptr;
 unsigned char   pta[MaxVertWidth];
 float           r,delta_r;
 int             vert_size;
-unsigned char   table[MaxVertSize];
 int             tab[MaxVertSize];
+int             line_len;
 int             i,j;
 //extern int      masx[MaxPorts];
 //extern int      masy[MaxPorts];
@@ -72,7 +72,7 @@ char            number[20];
 /* These are variable length arrays, so one past the end is not spare padding
  * the way it may be for a fixed array - it is whatever the compiler put next
  * in the frame, and aarch64 does not put the same thing there as x86-64. */
-for(i=0; i<MaxVertSize; i++) {table[i]=0; tab[i]=0;}
+for(i=0; i<MaxVertSize; i++) tab[i]=0;
 for(i=0; i<MaxVertWidth; i++) pta[i]=0;
 				for(port=0;port<MaxPorts; port++)
 				{
@@ -99,11 +99,14 @@ for(i=0; i<MaxVertWidth; i++) pta[i]=0;
 	 printf("\n delta=%i",delta);
    r=sqrt((float)delta_x*delta_x+(float)delta_y*delta_y);
   if (delta) delta_r=r/delta; else delta_r=0;
-	for (i=0;i<MaxVertSize;i++) {table[i]=i*delta_r+.5;tab[i]=i*delta_r+.5;}
-	/*	 printf("\n tab=%i",table[delta]);*/
+	for (i=0;i<MaxVertSize;i++) tab[i]=i*delta_r+.5;
+	/* tab[delta], which is the length of the cut - but delta counts grid
+	 * cells and tab[] is only MaxVertSize long, so a cut wider than the
+	 * array read past its end.  It is the same arithmetic without it. */
+	line_len=delta*delta_r+.5;
   vert_size=WINDOW_XSIZE/MaxBoxSize;
   for (i=MaxBoxSize;i>2;i--)
-   if (table[delta]>=MaxHorizLine/i)
+   if (line_len>=MaxHorizLine/i)
 	 vert_size=WINDOW_XSIZE/(i-1);
 	 printf("\n vert_s=%i",vert_size);
 	vert_array=malloc(vert_size*MaxVertKm*VertLines+500);
@@ -164,7 +167,7 @@ for(i=0; i<MaxVertWidth; i++) pta[i]=0;
 	 if (k<0) continue;                     /* ... or below the ground */
 	 nlev++; if (k<kmin) kmin=k; if (k>kmax) kmax=k;
 	 ptr=vert_array+k*vert_size;
-			 for (i=0,x=x1,y=y1,countx=0,county=0;table[i]<vert_size && i<MaxVertSize;
+			 for (i=0,x=x1,y=y1,countx=0,county=0;tab[i]<vert_size && i<MaxVertSize;
 			       countx+=delta_x,county+=delta_y,i++)
 	   {
        if (countx>=delta) {
@@ -177,7 +180,7 @@ for(i=0; i<MaxVertWidth; i++) pta[i]=0;
 	 y+=incy;
 	 if (y>=MSIZE_int) break;
 			  }
-      ptr[table[i]]=*(maps[level].bufdata+(long)y*MSIZE_int+x);
+      ptr[tab[i]]=*(maps[level].bufdata+(long)y*MSIZE_int+x);
 
 	   }
 
