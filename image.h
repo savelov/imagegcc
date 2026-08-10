@@ -127,13 +127,23 @@ extern const char *palette_label(int value);   /* legend label for a byte */
 extern const char *palette_nodata_label(void);
 extern const char *palette_label_of(const char *name,int value);
 
+/* The ZDR byte scale, in one place: it wraps, and every reader of a ZDR byte
+ * has to wrap it the same way or a cell prints one value and is painted
+ * another.  See the comment on zdr_value() in palette.c. */
+extern float zdr_value(int byte);
+extern int   zdr_byte(float value);
+
 /* Synthetic key code: KEY_PRODUCT+i selects maps[i].  The Qt panel uses it to
  * reach products that have no letter of their own. */
 #define KEY_PRODUCT 0x2000
 extern int no_maps;
 extern int map_present(int index);    /* the current file carries this map */
 extern int select_product(int key);   /* 1 when the key named a product */
+/* map_value() takes DOUBLED coordinates - the display grid the cursor moves
+ * over, twice MSIZE_int each way; get_map_data() halves them again.  To read
+ * the data itself use map_grid(), which hands over the grid as it is. */
 extern int map_value(map_type id,int xcoord,int ycoord);  /* -1 when absent */
+extern int map_grid(map_type id,unsigned char *out);      /* side, or 0 */
 
 extern int current_map,cur_file;
 extern struct map_info maps[];
@@ -191,7 +201,7 @@ extern void koord(unsigned char *tb,unsigned char *tbl_ptr, unsigned int size_fr
 extern void walk_table_max(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to,int nodata);
 extern void walk_table_idw(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to,float MapRes,int port,int,int nodata);
 extern void walk_table_near(unsigned char *tb,unsigned char *ntb,unsigned char *tbl_ptr,unsigned int size_from,unsigned int size_to,float MapRes,int port,int,int nodata);
-extern void interpolation (unsigned char *ntb,int map_size,int nodata,int noecho,int smooth);
+extern void interpolation (unsigned char *ntb,int map_size,int nodata,int noecho,int smooth,int wrapped);
 extern void expand(unsigned char *in,unsigned char _HUGE *out,int mapsize);
 extern void expand_rect(unsigned char *in,unsigned char _HUGE *out,int w,int h);
 extern void expand_heights(unsigned char *in,unsigned char _HUGE *out,int mapsize);

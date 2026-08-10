@@ -505,20 +505,29 @@ if ((*tb==nodata && l<Rsv && x!=-1 && y!=-1)||(*tb!=nodata && x!=-1 && y!=-1)) {
  *
  * "No echo" is an absence, not a reading, and averaging it in invented data.
  * It shows worst in differential reflectivity, whose byte scale is not
- * monotonic: 123 and above mean -0.4..3.5 dB, while 121 and below mean
- * 3.6..12.2 dB.  Mixing the no-echo byte 0 into three ordinary readings of
- * 132 (0.5 dB) gives (132*3+0+2)/4 = 99, which reads back as 10.0 dB - a
- * scatter of ">5 dB" cells through otherwise quiet weather.
+ * monotonic: 123 and above mean -0.4..3.5 dB, 81..120 mean -4.6..-0.7, and
+ * 80 and below are the high readings, 3.6..8.1 dB.  Mixing the no-echo byte
+ * 0 into three ordinary readings of 132 (0.5 dB) gives (132*3+0+2)/4 = 99,
+ * which reads back as -2.8 dB - a scatter of blue cells through otherwise
+ * quiet weather.
  *
  * `smooth` is 0 for a product whose bytes are codes rather than quantities.
  * Averaging those invents phenomena that were never observed - halfway
  * between a heavy shower and light rain is not a thing - so such a hole takes
  * the commonest of its neighbours instead, ties going to the stronger code,
- * which is how these maps already combine across radars. */
-void interpolation (unsigned char *ntb,int map_size,int nodata,int noecho,int smooth) {
+ * which is how these maps already combine across radars.
+ *
+ * `wrapped` says the bytes are a quantity but not a monotonic one, which is
+ * differential reflectivity and nothing else.  The mean of two ZDR bytes is
+ * not the byte of their mean: a hole between 162 (3.5 dB) and 35 (3.6 dB)
+ * averages to 98, which is -2.9 dB, a cold cell in the middle of a warm one.
+ * Such a hole is filled in the value and encoded back. */
+void interpolation (unsigned char *ntb,int map_size,int nodata,int noecho,int smooth,
+                    int wrapped) {
 int i,j,k,n,sum;
 unsigned char *Ptr;
 int v[4];
+double value;
 
  for (i=1;i<map_size-1;i++)
 	for (j=1; j<map_size-1;j++) {
@@ -536,14 +545,15 @@ int v[4];
 	     *Ptr=best;
 	     continue;
 	  }
-	  sum=n=0;
+	  sum=n=0; value=0.0;
 	  for (k=0;k<4;k++) {
 	     if (noecho>=0 && v[k]==noecho) continue;
-	     sum+=v[k]; n++;
+	     if (wrapped) value+=zdr_value(v[k]); else sum+=v[k];
+	     n++;
 	  }
 	  /* nothing around it saw anything, so neither did this cell */
 	  if (n==0) { if (noecho>=0) *Ptr=noecho; continue; }
-	  *Ptr=(sum+n/2)/n;
+	  *Ptr= wrapped ? zdr_byte((float)(value/n)) : (sum+n/2)/n;
  }
 }
 

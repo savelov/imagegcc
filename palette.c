@@ -16,6 +16,7 @@
 #ifndef NOGRX
 #include <grx20.h>
 #endif
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +27,49 @@ extern FILE *logfile;
 
 long clev[256];                  /* .wrk byte -> GrColor, for draw_line() */
 struct palette current_palette;
+
+/* ------------------------------------------------------------------ */
+/* the ZDR byte scale                                                  */
+/* ------------------------------------------------------------------ */
+
+/* BUFR 021003 holds round(10*ZDR)+5 in seven unsigned bits, so ZDR below
+ * -0.5 dB underflows and reads back near the top of the range, where genuine
+ * readings above 8.1 dB would also land.  The byte cannot say which it is; the
+ * split at 81 takes the likelier reading on each side, and was measured - it
+ * is where neighbouring cells disagree least over real rasters.
+ *
+ * The scale therefore runs 3.6 .. 8.1 dB over bytes 35..80 and -4.6 .. 3.5 dB
+ * over 81..162, and every reader of a ZDR byte has to use the same one: the
+ * cursor readout, the cross section, the hole filling, and mkpalettes.py,
+ * which is what coloured the palette the byte indexes.  Four copies of this
+ * arithmetic is how a cell came to print one value and be painted another, so
+ * there is one copy, here.  Its Python twin is
+ * convert_aksopri_differential_reflectivity_byte in cao/conversion.py, and
+ * tests/zdr-roundtrip.py checks the two against each other. */
+float zdr_value(int byte)
+{
+   return byte>=81 ? (byte-127)*0.1f : (byte+1)*0.1f;
+}
+
+/* ... and back, which is how a value that was interpolated - across a hole in
+ * the grid, or between two levels of a cross section - gets a colour: the .pal
+ * files are indexed by the byte, not by the value.  Each end clamps onto the
+ * branch it came from, so an interpolated value cannot cross the wrap and
+ * change sign. */
+int zdr_byte(float value)
+{
+   int byte=(int)floor(value*10.0+0.5);
+
+   if (byte>=36) {
+      byte-=1;
+      if (byte>80) byte=80;                     /* 8.1 dB, the top */
+   } else {
+      byte+=127;
+      if (byte<81) byte=81;                     /* -4.6 dB, the bottom */
+   }
+   if (byte==121) byte=122;                     /* 121 is the no-data byte */
+   return byte;
+}
 
 /* Geometry of the legend column, to the left of the map.  The title sits at
  * LEG_TOP, the units under it, then one row per band. */

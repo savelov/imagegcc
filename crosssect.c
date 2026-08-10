@@ -131,10 +131,7 @@ static float cs_value(int family,int byte)
 {
    switch (family) {
    case FAM_DBZ: return byte/3.0f;
-   case FAM_ZDR:
-      /* debufr wraps this scale: bytes from 123 up are 10*ZDR+127, the rest
-       * are the 0.2 dB continuation */
-      return byte>=123 ? (byte-127)*0.1f : (byte+1)*0.1f;
+   case FAM_ZDR:  return zdr_value(byte);       /* the scale wraps - palette.c */
    case FAM_VEL: return (byte-127)/2.0f;
    default:      return (float)byte;
    }
@@ -164,16 +161,7 @@ int cross_section_byte(int family,float value)
       if (byte>254) byte=254;                   /* 255 is the no-data byte */
       break;
    case FAM_ZDR:
-      /* The scale wraps, so a positive reading has two encodings.  Use the
-       * continuation for what it covers (0.1 .. 12.3 dB) and the wrapped
-       * branch for the negatives and for anything above it. */
-      byte=(int)floor(value*10.0+0.5);
-      if (value<0.05f || byte-1>122) byte+=127;
-      else byte-=1;
-      if (byte<0) byte=0;
-      if (byte>255) byte=255;
-      if (byte==121) byte=122;                  /* 121 is the no-data byte */
-      if (byte==0) byte=128;                    /* 0 is "no echo": 0.1 dB */
+      byte=zdr_byte(value);                     /* the inverse, in palette.c */
       break;
    default:
       byte=(int)floor(value+0.5);

@@ -556,7 +556,8 @@ flags=0;
 	for (i=0; i<no_maps; i++)
 	   if (maps[i].mapres!=0 && maps[i].bufdata)
 	      interpolation(maps[i].bufdata,MSIZE_int,maps[i].nodata,
-	                    maps[i].noecho,maps[i].family!=FAM_PHENOM);
+	                    maps[i].noecho,maps[i].family!=FAM_PHENOM,
+	                    maps[i].family==FAM_ZDR);
 
         set_cur_map(maps[current_map].mapid);
 
@@ -639,6 +640,24 @@ unsigned char in_buffer[SIZE][SIZE],out_buffer[SIZE*2][SIZE*2];
 /* The reading at a point, or -1 when there is none.  Products no longer agree
  * on which byte means "no data" - see the maps[] table - so the readout column
  * cannot just compare against 254 any more. */
+/* The whole product grid, MSIZE_int by MSIZE_int bytes, exactly as
+ * save_geotiff() writes it: one cell per mapres kilometres, row 0 at the
+ * north edge.  Returns the side in cells, or 0 when the frame does not
+ * carry the product.
+ *
+ * This exists because map_value() is not a way to read the data: its
+ * coordinates are the doubled ones the display and the cursor use (see
+ * get_map_data(), which halves them), so walking a MSIZE_int square with it
+ * reads a quarter of the map, each cell four times, without saying so. */
+int map_grid(map_type id,unsigned char *out) {
+int i;
+
+ for (i=0; i<no_maps; i++) if (maps[i].mapid==id) break;
+ if (i==no_maps || maps[i].mapres==0 || maps[i].bufdata==NULL) return 0;
+ memcpy(out,maps[i].bufdata,(long)MSIZE_int*MSIZE_int);
+ return MSIZE_int;
+}
+
 int map_value(map_type id,int xcoord,int ycoord) {
 int i,value;
 

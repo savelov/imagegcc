@@ -137,17 +137,48 @@ section along that line.  There are two of them, one per front end, and they
 share nothing but the two clicks.
 
 --------------------------------------------------------------------------------
-imagegcc: vert.c, unchanged
+imagegcc: vert.c, over the map
 --------------------------------------------------------------------------------
 
-The original.  It has nowhere to put the section but the map window, so it
-paints over the map; a third click reloads the file to get the map back.  The
+The original - the drawing and the scheme are as they were, and what has been
+touched since is memory safety: three arrays it wrote past the ends of, an
+expand() call reading a square out of a buffer that is not one, and a row index
+taken from the product header without a check against zero.  One behavioural
+change came with them.  The column index existed twice, as an int and as an
+unsigned char, and the two loops that walk the cut used different ones; past
+column 255 the char wrapped, which both scrambled the far end of a long section
+and made the cut look shorter than it was when choosing the horizontal
+resolution.  A long cut now gets the finer grid the code was always trying to
+give it - a 421 cell cut goes from 187 columns to 500.
+
+It has nowhere to put the section but the map window, so it paints over the
+map; a third click reloads the file to get the map back.  The
 sampling is the nearest grid cell along a Bresenham line, the vertical raster is
 a fixed four rows per kilometre, and the gaps between the constant altitude
 levels are filled by ramping the palette bytes from the level below to the one
 above.  That ramp is what makes an echo top drift: it runs to zero over the
 whole gap, so a level with 40 dBZ under an empty one paints a smooth 40 to 0
 gradient across a kilometre where there is nothing at all.
+
+--------------------------------------------------------------------------------
+cross=x1,y1,x2,y2: the same section, with no window
+--------------------------------------------------------------------------------
+
+    ./gen-bitmap time22:00 cross=40,40,60,60
+
+Cuts between two product grid cells and writes cross.png.  Nothing is displayed:
+the batch build already renders through GRX's memory driver, so vert() paints
+into that surface and it is saved from there.  The batch surface is normally
+only as wide as the legend column - the map goes to RamContext and the legend is
+all that is ever drawn on the surface itself - so init_graph() widens it when
+cross= is given.
+
+It exists because vert.c could not be reached except by clicking twice on a map.
+Nothing headless had run a line of it, and it held a read of tens of kB past a
+malloc: expand() doubles a square mapsiz by mapsiz array, and a section is
+vert_size wide by MaxVertKm*VertLines tall.  That faults on Windows, where the
+heap keeps an unmapped page close by, and goes unnoticed on glibc, whose arenas
+absorb it.  tests/sanitize-test.sh drives five cuts through it on every push.
 
 --------------------------------------------------------------------------------
 imageqt: crosssect.c, in a window of its own
@@ -469,3 +500,82 @@ The patches are generated against the upstream grx249.tar.gz above.  The
 DJGPP-style grx249s.zip distribution has some makedefs.grx defaults set
 differently; applying these patches to it reports one hunk as already
 applied, which is harmless (the workflow passes -N for that reason).
+
+================================================================================
+Tests and sanitizers
+================================================================================
+
+    cd tests && ./run-tests.sh       GRX probes, see tests/README
+    ./tests/geotiff-test.sh          render the fixture, read every TIFF back
+    ./tests/sanitize-test.sh         the same fixture under ASan and UBSan
+
+All three take GRX=<grx-tree> from the environment.  The fixture is tests/data,
+built from the BUFR messages in tests/bufr.
+
+sanitize-test.sh rebuilds with SAN=1, which adds -fsanitize=address,undefined
+and -fno-sanitize-recover=all - undefined behaviour that only prints is
+undefined behaviour nobody reads - and then puts the fixture through five
+renders and five cuts.  The SAN build stops after gen-bitmap and imagegcc:
+libimage.so refuses undefined symbols on purpose, and the sanitizer runtime is
+exactly that in a shared object.  It leaves sanitized binaries behind, so
+rebuild with plain ./make.sh if you meant to keep the real ones.
+
+Leak detection is off.  The program frees very little and never meant to - it
+renders and exits - and leak reports would bury the memory errors this is for.
+
+linux.yml runs it on x86_64 and arm64, after the artifact upload so that the
+binaries which ship are not the sanitized ones.  Two things it caught that
+years of CI had not:
+
+  * the expand() overread described under cross= above, as a heap-buffer-
+    overflow 0 bytes past a 4964 byte region allocated in vert.c;
+
+  * void main.  Outside the Qt build the function in image.c is main, and it
+    was declared void, so a render that returned normally instead of through
+    one of the exit(0) paths left the exit status to whatever happened to be
+    in the return register.  x86-64 held 0 there and thirty years passed;
+    aarch64 held 80.
+
+UBSan also reported every read and write of a short in the packed coordinate
+tables of coord.c: a byte count sits in front of each one, so all of them are
+at odd addresses.  They go through get_short()/put_short() now, which memcpy
+and compile to the same instruction.  Keep the run clean - a report that is
+known and ignored hides the next one that is not.
+
+================================================================================
+Releases
+================================================================================
+
+    git tag v1.0 && git push origin v1.0
+
+.github/workflows/release.yml runs the three platform builds and attaches their
+bundles to a GitHub release for the tag:
+
+    imagegcc-windows-x64.zip       mingw64 under MSYS2
+    imagegcc-windows-arm64.zip     CLANGARM64 under MSYS2
+    imagegcc-macos-ARM64.tar.gz    imageqt.app and the command line tools
+    HOW-TO-RUN-macos.txt
+
+The builds are macos.yml, windows.yml and windows-arm64.yml, called rather than
+copied - a release has to ship what CI has been testing, not a second recipe
+that drifts from it.  That is also why those three carry branches: '**' on
+their push trigger: without it a tag would build each of them twice, once
+directly and once through release.yml.
+
+macOS ships as a tarball and has to.  GitHub's artifact zip drops the
+executable bits and dereferences the symlinks a Qt .framework is made of, which
+breaks the ad hoc signature the bundle is loaded with - and on Apple silicon
+that is not a warning, the binary is killed on load with nothing useful said.
+Unpacking still needs
+
+    xattr -dr com.apple.quarantine dist
+
+because the bundle is ad hoc signed and not notarized; HOW-TO-RUN-macos.txt
+ships alongside it saying so.  Windows has neither problem and gets zips.
+
+Linux is deliberately not in the release: a glibc build is only good on the
+distribution that made it, so there is nothing useful to attach.  Build from
+source there.
+
+Re-running the publish job for a tag that already has a release replaces the
+files rather than failing on the create.
