@@ -139,6 +139,15 @@ Locally:
     ./gen-bitmap time22:00 zdr2
     QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=shot.png ./imageqt time22:00 map1
 
+cross-section-test.py
+    Cuts a vertical section through the Tyumen frame with the Python bindings,
+    for ZDR and for reflectivity, and checks that it comes out at all, that no
+    byte in it decodes outside the range the levels it cut through covered,
+    that its colours are the ones config/palettes holds, and that png() writes
+    a file that reads back as the pixels it was given.  Needs libimage.so.
+
+        python3 tests/cross-section-test.py -v
+
 geotiff-test.sh / geotiff-check.py
     Renders tests/data to GeoTIFF, one file per product family, and reads each
     one back: size, colour map, georeferencing, the per product no-data byte

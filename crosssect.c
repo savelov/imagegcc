@@ -465,3 +465,55 @@ const char *cross_section_title(int family)
 
    return map>=0 ? maps[map].descr : "";
 }
+
+/* ------------------------------------------------------------------ */
+/* the section as a picture                                            */
+/* ------------------------------------------------------------------ */
+
+/* The section as a raster of palette bytes, for a caller that wants a picture
+ * rather than the numbers - pyimage.py writes a PNG straight from this, and a
+ * web page is the reason it exists.  Row 0 is the TOP, the way an image is
+ * stored and not the way the section is computed; one byte per cell, to be
+ * looked up in the table cross_section_colors() fills.  A cell the beam never
+ * reached carries the product's own no-data byte, so it can be made
+ * transparent by whoever writes the file.
+ *
+ * Call it with out=NULL to learn the size, allocate width*height, and call it
+ * again.  Returns 1 when there is a section to draw and 0 when there is not:
+ * fewer than two levels of the family, or a line too short to cut along. */
+int cross_section_raster(int x1,int y1,int x2,int y2,int family,int smooth,
+                         unsigned char *out,int max,int *width,int *height,
+                         float *length_km,float *top_km,float *base_km)
+{
+   struct cross_section cs;
+   struct palette *pal;
+   int ix,iz,byte,empty;
+
+   if (!cross_section_compute(x1,y1,x2,y2,family,smooth,&cs)) return 0;
+
+   if (width)     *width     = cs.width;
+   if (height)    *height    = cs.height;
+   if (length_km) *length_km = cs.length_km;
+   if (top_km)    *top_km    = cs.top_km;
+   if (base_km)   *base_km   = cs.base_km;
+
+   if (out==NULL || max<cs.width*cs.height) {
+      cross_section_release(&cs);
+      return out==NULL;                         /* sizing call, or too small */
+   }
+
+   pal=family_palette(family);
+   empty = pal!=NULL ? pal->nodata : 0;
+
+   for (iz=0;iz<cs.height;iz++) {
+      const float *src=cs.value+(long)iz*cs.width;
+      unsigned char *dst=out+(long)(cs.height-1-iz)*cs.width;
+
+      for (ix=0;ix<cs.width;ix++) {
+         byte=cross_section_byte(family,src[ix]);
+         dst[ix]= byte<0 ? (unsigned char)empty : (unsigned char)byte;
+      }
+   }
+   cross_section_release(&cs);
+   return 1;
+}

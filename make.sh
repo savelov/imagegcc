@@ -176,7 +176,8 @@ fi
 # needed a graphics driver.  apistub.c supplies the few display globals
 # read_cfg() sets regardless.
 echo "building $SOLIB ..."
-LIBSRC="files.c coord.c geotiff.c palette.c archive.c compat.c proj_compat.c apistub.c"
+LIBSRC="files.c coord.c geotiff.c palette.c archive.c compat.c proj_compat.c
+        crosssect.c apistub.c"
 SOOBJ=.soobj
 rm -rf $SOOBJ && mkdir -p $SOOBJ
 for src in $LIBSRC; do

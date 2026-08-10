@@ -39,7 +39,9 @@ import ctypes
 import datetime
 import json
 import os
+import struct
 import tempfile
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,6 +59,11 @@ for _i in range(1, 11):
     PRODUCTS["vel%d" % _i] = MAP_V1 + _i - 1
 for _i, _h in enumerate((1, 3, 6, 12, 24)):
     PRODUCTS["sum%d" % _h] = MAP_Q1 + _i
+
+#: product family, as image.h numbers them.  A cross section is cut through a
+#: family - all the levels of it the frame carries - not through one product.
+FAM_DBZ, FAM_ZDR, FAM_VEL = 0, 3, 4
+FAMILIES = {"dbz": FAM_DBZ, "zdr": FAM_ZDR, "vel": FAM_VEL}
 
 
 class ImageError(Exception):
@@ -113,6 +120,65 @@ class Radar(object):
                    self.speed_kmh, self.azimuth_deg))
 
 
+class CrossSection(object):
+    """A vertical slice through the levels of one family.
+
+    `data` is width*height palette bytes, row 0 at the TOP, to be looked up in
+    `palette` - the same 256 colours the map and the GeoTIFF use, so a section
+    and a map of the same frame cannot disagree about what a colour means.
+    Cells the beam never reached carry `nodata`, which png() makes transparent.
+    """
+
+    def __init__(self, width, height, data, palette, nodata,
+                 length_km, top_km, base_km, family):
+        self.width = width
+        self.height = height
+        self.data = data
+        self.palette = palette          # 768 bytes, RGB
+        self.nodata = nodata
+        self.length_km = length_km      # what width spans
+        self.top_km = top_km            # what height spans
+        self.base_km = base_km          # the lowest level; below it is guesswork
+        self.family = family
+
+    def png(self, path):
+        """Write it as a palette PNG, no-data transparent.  Standard library
+        only: zlib is what a PNG is, and pulling in an imaging package to
+        write 40 kB of pixels would be the largest dependency in the tree."""
+        def chunk(tag, payload):
+            return (struct.pack(">I", len(payload)) + tag + payload +
+                    struct.pack(">I", zlib.crc32(tag + payload) & 0xffffffff))
+
+        alpha = bytearray(b"\xff" * 256)
+        if 0 <= self.nodata < 256:
+            alpha[self.nodata] = 0
+        raw = bytearray()
+        for row in range(self.height):
+            raw.append(0)               # filter type 0, none
+            raw += self.data[row * self.width:(row + 1) * self.width]
+
+        with open(path, "wb") as handle:
+            handle.write(b"\x89PNG\r\n\x1a\n")
+            handle.write(chunk(b"IHDR", struct.pack(">IIBBBBB", self.width,
+                                                    self.height, 8, 3, 0, 0, 0)))
+            handle.write(chunk(b"PLTE", bytes(self.palette)))
+            handle.write(chunk(b"tRNS", bytes(alpha)))
+            handle.write(chunk(b"IDAT", zlib.compress(bytes(raw), 9)))
+            handle.write(chunk(b"IEND", b""))
+        return path
+
+    def array(self):
+        """The bytes as a numpy (height, width) uint8 array.  Needs numpy."""
+        import numpy
+        return numpy.frombuffer(self.data, numpy.uint8).reshape(self.height,
+                                                                self.width)
+
+    def __repr__(self):
+        return ("<CrossSection %dx%d cells, %.0f km along, %.1f..%.1f km up>"
+                % (self.width, self.height, self.length_km, self.base_km,
+                   self.top_km))
+
+
 class Frame(object):
     """One observation time.  `load()` builds the mosaic for a product."""
 
@@ -154,6 +220,18 @@ class Frame(object):
         zdr_value() in palette.c.  `info['nodata']` names the empty byte.
         """
         return self._archive._grid()
+
+    def cross_section(self, x1, y1, x2, y2, family="zdr", smooth=True):
+        """Cut a vertical section between two cells of the product grid.
+
+        The endpoints are grid cells, the same ones grid() is indexed by;
+        `info` carries bbox, pixel_m and proj4 for turning a longitude and a
+        latitude into a pair.  `family` is "zdr", "dbz" or "vel" - a section
+        needs at least two levels of it, and returns None when the frame does
+        not carry that many.  Any product of the frame has to be load()ed
+        first; which one does not matter, the levels are found from the family.
+        """
+        return self._archive._cross_section(x1, y1, x2, y2, family, smooth)
 
     def array(self):
         """grid() as a numpy (size, size) uint8 array.  Needs numpy."""
@@ -257,6 +335,15 @@ class Archive(object):
         lib.set_cur_map.argtypes = [ctypes.c_int]
         lib.map_index.argtypes = [ctypes.c_int]
         lib.map_index.restype = ctypes.c_int
+        lib.cross_section_raster.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_float)]
+        lib.cross_section_raster.restype = ctypes.c_int
+        lib.cross_section_colors.argtypes = [ctypes.c_int, ctypes.c_char_p]
+        lib.cross_section_colors.restype = ctypes.c_int
         lib.map_grid.argtypes = [ctypes.c_int, ctypes.c_char_p]
         lib.map_grid.restype = ctypes.c_int
         lib.save_geotiff.argtypes = [ctypes.c_char_p]
@@ -324,6 +411,38 @@ class Archive(object):
             raise ImageError("map_grid returned a %d cell grid, expected %d"
                              % (side, size))
         return buf.raw
+
+    def _cross_section(self, x1, y1, x2, y2, family, smooth):
+        try:
+            fam = FAMILIES[family] if isinstance(family, str) else int(family)
+        except KeyError:
+            raise ImageError("unknown family %r - one of %s"
+                             % (family, ", ".join(sorted(FAMILIES))))
+        if self._current is None:
+            raise ImageError("no frame loaded - call Frame.load() first")
+
+        w, h = ctypes.c_int(), ctypes.c_int()
+        length, top, base = (ctypes.c_float(), ctypes.c_float(), ctypes.c_float())
+        args = [x1, y1, x2, y2, fam, 1 if smooth else 0]
+        # the sizing call first: how many levels there are, and how long the
+        # line is, decide the raster
+        if not self._lib.cross_section_raster(*(args + [None, 0,
+                ctypes.byref(w), ctypes.byref(h), ctypes.byref(length),
+                ctypes.byref(top), ctypes.byref(base)])):
+            return None
+        cells = w.value * h.value
+        buf = ctypes.create_string_buffer(cells)
+        if not self._lib.cross_section_raster(*(args + [buf, cells,
+                ctypes.byref(w), ctypes.byref(h), ctypes.byref(length),
+                ctypes.byref(top), ctypes.byref(base)])):
+            return None
+
+        rgb = ctypes.create_string_buffer(256 * 3)
+        if not self._lib.cross_section_colors(fam, rgb):
+            raise ImageError("no palette for family %r" % family)
+        nodata = self._current.info["nodata"]
+        return CrossSection(w.value, h.value, buf.raw, rgb.raw, nodata,
+                            length.value, top.value, base.value, fam)
 
     def _geotiff(self, path):
         path = os.path.abspath(path)          # the engine runs in workdir
