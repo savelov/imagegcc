@@ -110,6 +110,11 @@ int  cross_section_levels(int family);
  * `rgb` is 256*3 bytes; the legend is one row per call, strongest first, and
  * returns 0 once there are no more.  Labels and titles are cp866. */
 int  cross_section_byte(int family,float value);
+/* the section as a picture: palette bytes, row 0 at the top.  out=NULL
+ * reports the size and draws nothing.  See crosssect.c. */
+int  cross_section_raster(int x1,int y1,int x2,int y2,int family,int smooth,
+                          unsigned char *out,int max,int *width,int *height,
+                          float *length_km,float *top_km,float *base_km);
 int  cross_section_colors(int family,unsigned char *rgb);
 int  cross_section_legend(int family,int row,unsigned char *rgb,
                           char *label,int size);

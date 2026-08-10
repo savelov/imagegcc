@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build tests/data from the BUFR files in tests/bufr.
+"""Build tests/data from the BUFR files in tests/bufr and tests/bufr-tyumen.
 
 The archive the viewer reads is one zip per station per observation time,
 named portN/YYMMDDHH.MMm, holding the .wrk product rasters plus header.wrk.
@@ -22,7 +22,10 @@ import importlib.util
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BUFR = os.path.join(HERE, "bufr")
+# One directory per station whose messages are kept.  Each holds its own
+# DEBUFR.CFg: bufr2wrk.py reads the local time shift and the per station dBZ
+# calibration out of the one beside the message, and they differ by feed.
+BUFR = [os.path.join(HERE, "bufr"), os.path.join(HERE, "bufr-tyumen")]
 DATA = os.path.join(HERE, "data")
 
 # Which port directory each station goes to.  The viewer takes a port's
@@ -33,6 +36,7 @@ DATA = os.path.join(HERE, "data")
 # code, e.g. RAKD, not the WMO number).
 PORT_FOR_STATION = {
     b"RAKD": 11,           # Krasnodar, WMO 39408
+    b"RATN": 97,           # Tyumen, WMO 39692 - the ten ZDR levels
 }
 
 
@@ -48,10 +52,17 @@ def load_bufr2wrk():
 def decode_all(b2w, tmpdir):
     """Decode every BUFR file; return {(station, stamp): {name: bytes}}."""
     frames = collections.defaultdict(dict)
-    for name in sorted(os.listdir(BUFR)):
+    for directory in BUFR:
+        print("decoding %s:" % directory)
+        decode_dir(b2w, tmpdir, directory, frames)
+    return frames
+
+
+def decode_dir(b2w, tmpdir, directory, frames):
+    for name in sorted(os.listdir(directory)):
         if not name.endswith(".buf"):
             continue
-        src = os.path.join(BUFR, name)
+        src = os.path.join(directory, name)
         out = os.path.join(tmpdir, name[:-4])
         os.makedirs(out, exist_ok=True)
         try:
@@ -73,7 +84,6 @@ def decode_all(b2w, tmpdir):
                  if not p.endswith("header.wrk")]
         print("  %-14s %s %s -> %s" % (name, station.decode(), stamp,
                                        ", ".join(prods)))
-    return frames
 
 
 def write_frames(frames):
@@ -108,7 +118,6 @@ def main():
     b2w = load_bufr2wrk()
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
-        print("decoding %s:" % BUFR)
         frames = decode_all(b2w, tmp)
         if "--list" in sys.argv:
             return 0

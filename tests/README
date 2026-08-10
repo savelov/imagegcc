@@ -74,8 +74,8 @@ scroll-cost.c       A benchmark, not a pass/fail check, so it is left out of
                     Build it by hand, see the header comment.
 
 
-bufr/, mkdata.py, data/
-=======================
+bufr/, bufr-tyumen/, mkdata.py, data/
+=====================================
 
 A small archive to render, so a build can be checked on a platform nobody
 here can boot.  The macOS workflow writes a paths file with "MAP tests/data",
@@ -85,6 +85,15 @@ is how a macOS build gets looked at without owning a Mac.
 bufr/       27 BUFR messages from Krasnodar (bulletin code RAKD, WMO 39408)
             as they arrive, plus the DEBUFR.CFg that bufr2wrk.py needs for
             the local time offset and the station table.
+
+bufr-tyumen/
+            20 messages from Tyumen (RATN, WMO 39692) for one observation,
+            2026-08-10 18:50: reflectivity levels 1-10 and differential
+            reflectivity levels 1-10, with that feed's own DEBUFR.CFg.  Ten
+            levels of one family is what a vertical section needs, and ZDR
+            is the scale that wraps, so this is the frame the ZDR GeoTIFF
+            checks and cross-section-test.py both cut through.  The rasters
+            it decodes to are byte-identical to the operational archive's.
 
 mkdata.py   Rebuilds data/ from them through ../bufr2wrk.py.  One BUFR
             message carries one product, so a frame is the set of messages
@@ -102,6 +111,10 @@ data/       The result: portN/YYMMDDHH.MMm zips of .wrk rasters plus
                               cloud top, phenomena, 1 h rainfall
                 25012510.50m   2 products: radial velocity 1 and 2
                 25061106.10m   1 product:  ZDR 1
+
+            and port97 -
+
+                26081018.50m  20 products: dbz 1-10, ZDR 1-10
 
             The port number is only a directory name here.  The viewer takes
             a port's position from header.wrk - files.c:477 reads bytes 47..52
@@ -125,6 +138,15 @@ Locally:
     printf 'WRK RAB\nMAP tests/data\nCFG config\nGRF config\n' > paths
     ./gen-bitmap time22:00 zdr2
     QT_QPA_PLATFORM=offscreen IMAGEQT_SHOT=shot.png ./imageqt time22:00 map1
+
+cross-section-test.py
+    Cuts a vertical section through the Tyumen frame with the Python bindings,
+    for ZDR and for reflectivity, and checks that it comes out at all, that no
+    byte in it decodes outside the range the levels it cut through covered,
+    that its colours are the ones config/palettes holds, and that png() writes
+    a file that reads back as the pixels it was given.  Needs libimage.so.
+
+        python3 tests/cross-section-test.py -v
 
 geotiff-test.sh / geotiff-check.py
     Renders tests/data to GeoTIFF, one file per product family, and reads each

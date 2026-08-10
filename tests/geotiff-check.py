@@ -18,6 +18,7 @@ import struct
 import sys
 import zlib
 import argparse
+import zipfile
 
 # the tags this writer sets, by number
 IMAGEWIDTH, IMAGELENGTH, BITSPERSAMPLE = 256, 257, 258
@@ -90,6 +91,43 @@ def pixels(blob, end, tags):
     return bytes(out)
 
 
+
+def zdr_value(byte):
+    """A ZDR .wrk byte in dB.  The scale wraps at 81; palette.c holds the one
+    definition the program uses, and tests/zdr-roundtrip.py is what keeps this
+    copy and that one in step."""
+    return (byte - 127) * 0.1 if byte >= 81 else (byte + 1) * 0.1
+
+
+def check_zdr(data, nodata, source, say):
+    """No cell may decode outside the range the source raster spanned.
+
+    The reprojection fills single cell holes from their neighbours, so the
+    image can hold bytes the source never had - but only ones whose value lies
+    between two readings that were there.  A value beyond both ends means the
+    fill happened in the byte, where the mean of 3.5 dB and 3.6 dB is -2.9.
+    """
+    path, _, member = source.partition(":")
+    with zipfile.ZipFile(path) as z:
+        raw = z.read(member)[8:]              # 8 byte map passport, then cells
+    src = set(raw) - {0, nodata, 255}
+    if not src:
+        raise TiffError("%s carries no readings to compare against" % source)
+    lo, hi = min(zdr_value(b) for b in src), max(zdr_value(b) for b in src)
+    say("source %s spans %+.1f .. %+.1f dB" % (member, lo, hi))
+
+    bad = {}
+    for b in set(data) - {0, nodata, 255}:
+        v = zdr_value(b)
+        if v < lo - 1e-9 or v > hi + 1e-9:
+            bad[b] = v
+    if bad:
+        raise TiffError("%d byte value(s) decode outside the source range: %s"
+                        % (len(bad), ", ".join("%d=%+.1f dB" % (b, v)
+                                               for b, v in sorted(bad.items()))))
+    say("every byte decodes inside the range the source spanned")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("file")
@@ -99,6 +137,13 @@ def main():
     ap.add_argument("--origin")
     ap.add_argument("--min-data", type=int, default=1,
                     help="fail if fewer cells than this carry a reading")
+    ap.add_argument("--zdr-source", metavar="ZIP:MEMBER",
+                    help="the .wrk raster this ZDR product was built from. "
+                         "Every byte in the image must decode to a value the "
+                         "source already spanned: the reprojection interpolates, "
+                         "and interpolating ZDR in the byte rather than in the "
+                         "value used to invent readings of the opposite sign "
+                         "(a hole between 3.5 and 3.6 dB averaged to -2.9)")
     args = ap.parse_args()
 
     blob = open(args.file, "rb").read()
@@ -173,6 +218,9 @@ def main():
     if carrying < args.min_data:
         raise TiffError("only %d cells carry a reading, expected %d or more"
                         % (carrying, args.min_data))
+
+    if args.zdr_source:
+        check_zdr(data, nodata, args.zdr_source, say)
     return 0
 
 
