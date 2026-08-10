@@ -27,9 +27,18 @@ nothing to assert - the byte genuinely cannot say which reading it holds.
 What it does assert is that the representable range round-trips within the
 quantisation debufr's table imposes.
 
+It also checks the second reader of these bytes.  The vertical cross section
+(crosssect.c) decodes a byte to interpolate it and then encodes the result
+back, because the palette is indexed by the byte and not by the value; the
+pair has to use the same split as showdata.c and has to be a round trip.  It
+was not: the section split at 123, so bytes 81..120 read as +8.2..+12.1 dB
+while the palette coloured them -4.6..-0.7, and the plot printed 9.1 dB under
+a cursor sitting on a deep blue cell.
+
     python3 tests/zdr-roundtrip.py [-v]
 """
 
+import math
 import os
 import re
 import sys
@@ -49,6 +58,89 @@ def viewer_decode():
     if not m:
         sys.exit('cannot find the FAM_ZDR formula in showdata.c')
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+# The same split again in the cross section, plus the inverse that turns an
+# interpolated value back into a byte for the palette to colour.
+SECTION_RE = re.compile(rb'return byte>=(\d+)\s*\?\s*\(byte-(\d+)\)\*0\.1f'
+                        rb'\s*:\s*\(byte\+(\d+)\)\*0\.1f')
+INVERSE_RE = re.compile(rb'byte=\(int\)floor\(value\*10\.0\+0\.5\);\s*'
+                        rb'if\s*\(byte>=(\d+)\)\s*\{\s*byte-=1;\s*'
+                        rb'if\s*\(byte>(\d+)\)\s*byte=(\d+);\s*'
+                        rb'\}\s*else\s*\{\s*byte\+=127;\s*'
+                        rb'if\s*\(byte<(\d+)\)\s*byte=(\d+);\s*\}\s*'
+                        rb'if\s*\(byte==(\d+)\)\s*byte=(\d+);')
+
+
+def strip_comments(src):
+    """C comments out, so a regex can see two statements as adjacent."""
+    return re.sub(rb'/\*.*?\*/', b' ', src, flags=re.S)
+
+
+def section_formulas():
+    """(split, hi_off, lo_off, top, bottom, nodata, nodata_to) from crosssect.c."""
+    src = strip_comments(open(os.path.join(ROOT, 'crosssect.c'), 'rb').read())
+    dec = SECTION_RE.search(src)
+    if not dec:
+        sys.exit('cannot find cs_value FAM_ZDR in crosssect.c')
+    enc = INVERSE_RE.search(src)
+    if not enc:
+        sys.exit('cannot find the FAM_ZDR case of cross_section_byte '
+                 'in crosssect.c')
+    first, top, top2, bottom, bottom2, nodata, nodata_to = (int(g)
+                                                            for g in enc.groups())
+    if top != top2 or bottom != bottom2:
+        sys.exit('the cross section clamps to a byte it did not test against')
+    return (int(dec.group(1)), int(dec.group(2)), int(dec.group(3)),
+            first, top, bottom, nodata, nodata_to)
+
+
+def check_section(split, hi_off, lo_off, DIF, verbose):
+    """The section must read a byte as showdata.c does and write it back."""
+    (s_split, s_hi, s_lo, first, top, bottom,
+     nodata, nodata_to) = section_formulas()
+
+    problems = []
+    if (s_split, s_hi, s_lo) != (split, hi_off, lo_off):
+        problems.append('crosssect.c decodes with (split %d, -%d, +%d), '
+                        'showdata.c with (split %d, -%d, +%d)'
+                        % (s_split, s_hi, s_lo, split, hi_off, lo_off))
+
+    def value(byte):
+        return (byte - s_hi) * 0.10 if byte >= s_split else (byte + s_lo) * 0.10
+
+    def encode(v):
+        b = int(math.floor(v * 10.0 + 0.5))
+        if b >= first:
+            b -= 1
+            if b > top:
+                b = top
+        else:
+            b += 127
+            if b < bottom:
+                b = bottom
+        return nodata_to if b == nodata else b
+
+    # every byte debufr's table can write, back to itself
+    for byte in sorted(set(DIF[1:])):
+        if byte == nodata:
+            continue                          # not a reading, it is the hole
+        back = encode(value(byte))
+        if back != byte:
+            problems.append('byte %d reads %+.1f dB and encodes back to %d'
+                            % (byte, value(byte), back))
+
+    # and the clamps: off either end of the scale, not across the wrap
+    for v, want in ((99.0, top), (-99.0, bottom)):
+        if encode(v) != want:
+            problems.append('%+.0f dB clamps to byte %d, not %d'
+                            % (v, encode(v), want))
+
+    if verbose:
+        print('  cross section split at byte %d, continuation %d..%d, '
+              'linear %d..%d' % (s_split, first - 1, top, bottom,
+                                 max(DIF[1:])))
+    return problems
 
 
 def dif_table():
@@ -122,6 +214,7 @@ def main():
     if good:
         print('  faithful range  %+.1f .. %+.1f dB' % (min(good), max(good)))
     print('  viewer split at byte %d (showdata.c)' % split)
+    section = check_section(split, hi_off, lo_off, DIF, verbose)
 
     # The contract: everything the 7 bit field can actually hold must survive.
     # That is raw 1..127 with the reference of -5, i.e. -0.4 .. +12.2 dB,
@@ -136,8 +229,15 @@ def main():
             print('   internal %3d  true %+5.1f  raw %3d  byte %3s  shown %s'
                   % (r[0], r[1], r[2], r[3], r[4]))
         return 1
+    if section:
+        print('FAIL: the cross section does not read these bytes the way the '
+              'map does:')
+        for p in section[:10]:
+            print('   ' + p)
+        return 1
     print('PASS: every ZDR the BUFR field can carry survives the chain, '
-          'within debufr quantisation')
+          'within debufr quantisation, and the cross section agrees with the '
+          'map on every byte')
     return 0
 
 

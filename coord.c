@@ -505,10 +505,11 @@ if ((*tb==nodata && l<Rsv && x!=-1 && y!=-1)||(*tb!=nodata && x!=-1 && y!=-1)) {
  *
  * "No echo" is an absence, not a reading, and averaging it in invented data.
  * It shows worst in differential reflectivity, whose byte scale is not
- * monotonic: 123 and above mean -0.4..3.5 dB, while 121 and below mean
- * 3.6..12.2 dB.  Mixing the no-echo byte 0 into three ordinary readings of
- * 132 (0.5 dB) gives (132*3+0+2)/4 = 99, which reads back as 10.0 dB - a
- * scatter of ">5 dB" cells through otherwise quiet weather.
+ * monotonic: 123 and above mean -0.4..3.5 dB, 81..120 mean -4.6..-0.7, and
+ * 80 and below are the high readings, 3.6..8.1 dB.  Mixing the no-echo byte
+ * 0 into three ordinary readings of 132 (0.5 dB) gives (132*3+0+2)/4 = 99,
+ * which reads back as -2.8 dB - a scatter of blue cells through otherwise
+ * quiet weather.
  *
  * `smooth` is 0 for a product whose bytes are codes rather than quantities.
  * Averaging those invents phenomena that were never observed - halfway

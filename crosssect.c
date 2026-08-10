@@ -132,9 +132,15 @@ static float cs_value(int family,int byte)
    switch (family) {
    case FAM_DBZ: return byte/3.0f;
    case FAM_ZDR:
-      /* debufr wraps this scale: bytes from 123 up are 10*ZDR+127, the rest
-       * are the 0.2 dB continuation */
-      return byte>=123 ? (byte-127)*0.1f : (byte+1)*0.1f;
+      /* The scale wraps, and it wraps at 81, not at 123: BUFR 021003 holds
+       * round(10*ZDR)+5 in 7 unsigned bits, so ZDR below -0.5 dB underflows
+       * into 81..120, where genuine readings above 8.1 dB would also land.
+       * The split takes the likelier reading on each side and has to be the
+       * one format_reading() in showdata.c and mkpalettes.py use - the colour
+       * comes from the palette, which is indexed by the byte, so a section
+       * that decodes the byte differently prints one value and paints
+       * another. */
+      return byte>=81 ? (byte-127)*0.1f : (byte+1)*0.1f;
    case FAM_VEL: return (byte-127)/2.0f;
    default:      return (float)byte;
    }
@@ -164,16 +170,19 @@ int cross_section_byte(int family,float value)
       if (byte>254) byte=254;                   /* 255 is the no-data byte */
       break;
    case FAM_ZDR:
-      /* The scale wraps, so a positive reading has two encodings.  Use the
-       * continuation for what it covers (0.1 .. 12.3 dB) and the wrapped
-       * branch for the negatives and for anything above it. */
+      /* The inverse of the split above.  3.6 dB and up is the continuation,
+       * bytes 35..80; everything below it is the linear branch, 81..162.
+       * Both ends clamp onto the branch they came from, so an interpolated
+       * value can never cross the wrap and change sign. */
       byte=(int)floor(value*10.0+0.5);
-      if (value<0.05f || byte-1>122) byte+=127;
-      else byte-=1;
-      if (byte<0) byte=0;
-      if (byte>255) byte=255;
+      if (byte>=36) {
+         byte-=1;
+         if (byte>80) byte=80;                  /* 8.1 dB, the top */
+      } else {
+         byte+=127;
+         if (byte<81) byte=81;                  /* -4.6 dB, the bottom */
+      }
       if (byte==121) byte=122;                  /* 121 is the no-data byte */
-      if (byte==0) byte=128;                    /* 0 is "no echo": 0.1 dB */
       break;
    default:
       byte=(int)floor(value+0.5);
