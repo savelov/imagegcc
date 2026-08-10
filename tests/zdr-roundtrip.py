@@ -46,30 +46,24 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-# The split the viewer uses, read out of showdata.c so this cannot drift.
-SPLIT_RE = re.compile(rb'v=\(value>=(\d+)\)\s*\?\s*\(value-(\d+)\)\*0\.1'
-                      rb'\s*:\s*\(value\+(\d+)\)\*0\.1')
+# The one definition of the scale: zdr_value()/zdr_byte() in palette.c.  Read
+# out of the source rather than copied, so this test fails if it moves.
+DECODE_RE = re.compile(rb'return byte>=(\d+)\s*\?\s*\(byte-(\d+)\)\*0\.1f'
+                       rb'\s*:\s*\(byte\+(\d+)\)\*0\.1f')
+ENCODE_RE = re.compile(rb'byte=\(int\)floor\(value\*10\.0\+0\.5\);\s*'
+                       rb'if\s*\(byte>=(\d+)\)\s*\{\s*byte-=1;\s*'
+                       rb'if\s*\(byte>(\d+)\)\s*byte=(\d+);\s*'
+                       rb'\}\s*else\s*\{\s*byte\+=127;\s*'
+                       rb'if\s*\(byte<(\d+)\)\s*byte=(\d+);\s*\}\s*'
+                       rb'if\s*\(byte==(\d+)\)\s*byte=(\d+);')
 
-
-def viewer_decode():
-    """(split, lo_off, hi_off) as showdata.c has them."""
-    src = open(os.path.join(ROOT, 'showdata.c'), 'rb').read()
-    m = SPLIT_RE.search(src)
-    if not m:
-        sys.exit('cannot find the FAM_ZDR formula in showdata.c')
-    return int(m.group(1)), int(m.group(2)), int(m.group(3))
-
-
-# The same split again in the cross section, plus the inverse that turns an
-# interpolated value back into a byte for the palette to colour.
-SECTION_RE = re.compile(rb'return byte>=(\d+)\s*\?\s*\(byte-(\d+)\)\*0\.1f'
-                        rb'\s*:\s*\(byte\+(\d+)\)\*0\.1f')
-INVERSE_RE = re.compile(rb'byte=\(int\)floor\(value\*10\.0\+0\.5\);\s*'
-                        rb'if\s*\(byte>=(\d+)\)\s*\{\s*byte-=1;\s*'
-                        rb'if\s*\(byte>(\d+)\)\s*byte=(\d+);\s*'
-                        rb'\}\s*else\s*\{\s*byte\+=127;\s*'
-                        rb'if\s*\(byte<(\d+)\)\s*byte=(\d+);\s*\}\s*'
-                        rb'if\s*\(byte==(\d+)\)\s*byte=(\d+);')
+# Every other reader has to call those two rather than keep a copy.  A copy is
+# what showed 9.1 dB in the cross section under a colour the palette had
+# chosen for -3.7, so a bare 0.1 factor next to a ZDR byte is a failure here.
+READERS = {'showdata.c':  (b'zdr_value',),               # the cursor readout
+           'crosssect.c': (b'zdr_value', b'zdr_byte'),   # the vertical section
+           'coord.c':     (b'zdr_value', b'zdr_byte')}   # hole filling
+COPY_RE = re.compile(rb'(value|byte)\s*[-+]\s*12[78]\s*\)\s*\*\s*0\.1')
 
 
 def strip_comments(src):
@@ -77,37 +71,35 @@ def strip_comments(src):
     return re.sub(rb'/\*.*?\*/', b' ', src, flags=re.S)
 
 
-def section_formulas():
-    """(split, hi_off, lo_off, top, bottom, nodata, nodata_to) from crosssect.c."""
-    src = strip_comments(open(os.path.join(ROOT, 'crosssect.c'), 'rb').read())
-    dec = SECTION_RE.search(src)
-    if not dec:
-        sys.exit('cannot find cs_value FAM_ZDR in crosssect.c')
-    enc = INVERSE_RE.search(src)
-    if not enc:
-        sys.exit('cannot find the FAM_ZDR case of cross_section_byte '
-                 'in crosssect.c')
+def viewer_decode():
+    """(split, hi_off, lo_off) as palette.c has them."""
+    src = strip_comments(open(os.path.join(ROOT, 'palette.c'), 'rb').read())
+    m = DECODE_RE.search(src)
+    if not m:
+        sys.exit('cannot find zdr_value() in palette.c')
+    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def encode_constants():
+    """(first, top, bottom, nodata, nodata_to) as zdr_byte() has them."""
+    src = strip_comments(open(os.path.join(ROOT, 'palette.c'), 'rb').read())
+    m = ENCODE_RE.search(src)
+    if not m:
+        sys.exit('cannot find zdr_byte() in palette.c')
     first, top, top2, bottom, bottom2, nodata, nodata_to = (int(g)
-                                                            for g in enc.groups())
+                                                            for g in m.groups())
     if top != top2 or bottom != bottom2:
-        sys.exit('the cross section clamps to a byte it did not test against')
-    return (int(dec.group(1)), int(dec.group(2)), int(dec.group(3)),
-            first, top, bottom, nodata, nodata_to)
+        sys.exit('zdr_byte() clamps to a byte it did not test against')
+    return first, top, bottom, nodata, nodata_to
 
 
-def check_section(split, hi_off, lo_off, DIF, verbose):
-    """The section must read a byte as showdata.c does and write it back."""
-    (s_split, s_hi, s_lo, first, top, bottom,
-     nodata, nodata_to) = section_formulas()
-
+def check_scale(split, hi_off, lo_off, DIF, verbose):
+    """The pair must round-trip every byte, and be the only copy of itself."""
+    first, top, bottom, nodata, nodata_to = encode_constants()
     problems = []
-    if (s_split, s_hi, s_lo) != (split, hi_off, lo_off):
-        problems.append('crosssect.c decodes with (split %d, -%d, +%d), '
-                        'showdata.c with (split %d, -%d, +%d)'
-                        % (s_split, s_hi, s_lo, split, hi_off, lo_off))
 
     def value(byte):
-        return (byte - s_hi) * 0.10 if byte >= s_split else (byte + s_lo) * 0.10
+        return (byte - hi_off) * 0.10 if byte >= split else (byte + lo_off) * 0.10
 
     def encode(v):
         b = int(math.floor(v * 10.0 + 0.5))
@@ -125,10 +117,9 @@ def check_section(split, hi_off, lo_off, DIF, verbose):
     for byte in sorted(set(DIF[1:])):
         if byte == nodata:
             continue                          # not a reading, it is the hole
-        back = encode(value(byte))
-        if back != byte:
+        if encode(value(byte)) != byte:
             problems.append('byte %d reads %+.1f dB and encodes back to %d'
-                            % (byte, value(byte), back))
+                            % (byte, value(byte), encode(value(byte))))
 
     # and the clamps: off either end of the scale, not across the wrap
     for v, want in ((99.0, top), (-99.0, bottom)):
@@ -136,10 +127,21 @@ def check_section(split, hi_off, lo_off, DIF, verbose):
             problems.append('%+.0f dB clamps to byte %d, not %d'
                             % (v, encode(v), want))
 
+    # nobody keeps a second copy
+    for name, wanted in sorted(READERS.items()):
+        src = strip_comments(open(os.path.join(ROOT, name), 'rb').read())
+        if COPY_RE.search(src):
+            problems.append('%s has its own copy of the scale - call '
+                            'zdr_value()/zdr_byte() instead' % name)
+        for symbol in wanted:
+            if symbol not in src:
+                problems.append('%s does not call %s(), so it is not using '
+                                'the shared scale' % (name, symbol.decode()))
+
     if verbose:
-        print('  cross section split at byte %d, continuation %d..%d, '
-              'linear %d..%d' % (s_split, first - 1, top, bottom,
-                                 max(DIF[1:])))
+        print('  scale: split %d, continuation %d..%d, linear %d..%d, '
+              'hole byte %d -> %d' % (split, first - 1, top, bottom,
+                                      max(DIF[1:]), nodata, nodata_to))
     return problems
 
 
@@ -213,8 +215,8 @@ def main():
     print('  lost or wrong   %3d' % lost)
     if good:
         print('  faithful range  %+.1f .. %+.1f dB' % (min(good), max(good)))
-    print('  viewer split at byte %d (showdata.c)' % split)
-    section = check_section(split, hi_off, lo_off, DIF, verbose)
+    print('  viewer split at byte %d (palette.c)' % split)
+    scale = check_scale(split, hi_off, lo_off, DIF, verbose)
 
     # The contract: everything the 7 bit field can actually hold must survive.
     # That is raw 1..127 with the reference of -5, i.e. -0.4 .. +12.2 dB,
@@ -229,15 +231,14 @@ def main():
             print('   internal %3d  true %+5.1f  raw %3d  byte %3s  shown %s'
                   % (r[0], r[1], r[2], r[3], r[4]))
         return 1
-    if section:
-        print('FAIL: the cross section does not read these bytes the way the '
-              'map does:')
-        for p in section[:10]:
+    if scale:
+        print('FAIL: the byte scale is not consistent across its readers:')
+        for p in scale[:10]:
             print('   ' + p)
         return 1
     print('PASS: every ZDR the BUFR field can carry survives the chain, '
-          'within debufr quantisation, and the cross section agrees with the '
-          'map on every byte')
+          'within debufr quantisation, and one definition of the scale serves '
+          'the readout, the section and the hole filling')
     return 0
 
 

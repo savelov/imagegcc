@@ -145,6 +145,23 @@ class Frame(object):
         self._archive._geotiff(path)
         return self.info
 
+    def grid(self):
+        """The mosaic as raw .wrk bytes: size*size of them, row 0 at the
+        north edge, the same grid and the same byte values geotiff() writes.
+
+        A byte is a byte: it means whatever the product's palette says it
+        means, and for differential reflectivity that scale wraps - see
+        zdr_value() in palette.c.  `info['nodata']` names the empty byte.
+        """
+        return self._archive._grid()
+
+    def array(self):
+        """grid() as a numpy (size, size) uint8 array.  Needs numpy."""
+        import numpy
+        data = self.grid()
+        side = int(round(len(data) ** 0.5))
+        return numpy.frombuffer(data, numpy.uint8).reshape(side, side)
+
     def __repr__(self):
         return "<Frame %s ports=%d product=%s>" % (
             self.timestamp.strftime("%Y-%m-%d %H:%M"),
@@ -240,6 +257,8 @@ class Archive(object):
         lib.set_cur_map.argtypes = [ctypes.c_int]
         lib.map_index.argtypes = [ctypes.c_int]
         lib.map_index.restype = ctypes.c_int
+        lib.map_grid.argtypes = [ctypes.c_int, ctypes.c_char_p]
+        lib.map_grid.restype = ctypes.c_int
         lib.save_geotiff.argtypes = [ctypes.c_char_p]
         lib.save_geotiff.restype = ctypes.c_int
         lib.save_info.argtypes = [ctypes.c_char_p]
@@ -289,6 +308,22 @@ class Archive(object):
                 return json.load(handle)
         finally:
             os.unlink(path)
+
+    def _grid(self):
+        # map_grid() copies the composite out whole.  Reading it cell by
+        # cell through map_value() is the obvious thing to try and is
+        # wrong: those coordinates are the doubled display ones, so a walk
+        # over size*size cells covers a quarter of the map.
+        size = self._current.info["size"] if self._current else 0
+        if not size:
+            raise ImageError("no product loaded - call Frame.load() first")
+        buf = ctypes.create_string_buffer(size * size)
+        want = PRODUCTS[self._current.product]
+        side = self._lib.map_grid(want, buf)
+        if side != size:
+            raise ImageError("map_grid returned a %d cell grid, expected %d"
+                             % (side, size))
+        return buf.raw
 
     def _geotiff(self, path):
         path = os.path.abspath(path)          # the engine runs in workdir

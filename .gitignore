@@ -30,5 +30,6 @@ renders/
 tiffs/
 paths-test
 
+libimage.so
 libimage.dll
 libimage.dylib
