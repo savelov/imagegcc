@@ -9,6 +9,10 @@
 #endif
 #include "proj_compat.h"
 
+/* where the library reports a radar it had to leave out; image.c and
+ * apistub.c define it, each for its own build */
+extern FILE *logfile;
+
 /* The packed coordinate tables put a byte count in front of each short, so
  * every short in them sits at an odd address.  Reading one through a short *
  * is undefined - x86 does not care and aarch64 mostly does not either, but
@@ -206,7 +210,7 @@ int xc=-MapRes*(int)size_to/2,yc=MapRes*(int)size_to/2;
 short _HUGE *my_table;
 unsigned char *my_packtable;
 
-projPJ pj_stere, pj_merc, pj_latlong;
+projPJ pj_stere=NULL, pj_merc=NULL, pj_latlong=NULL;
 char port_config[128];
 char center_config[128];
 double myx, myy;
@@ -226,8 +230,11 @@ for (port=0;port<MaxPortTables;port++)
   my_packtable=malloc(MaxPacked);
 
   if (table[port]!=NULL) free(table[port]);
+  table[port]=NULL;              /* freed - the cache must not keep the pointer */
 
   B[port]=BN; L[port]=LN; Res[port]=MapRes; MapSize[port]=size_from;
+
+  if (my_table==NULL || my_packtable==NULL) goto fail;
 
 //  cosf0u=cos(BU);
 // sinf0u=sin(BU);
@@ -243,13 +250,13 @@ for (port=0;port<MaxPortTables;port++)
   sprintf(port_config,"+proj=aeqd +lat_0=%f +lon_0=%f +k_0=1.0 +x_0=0 +y_0=0",BN/DEG_TO_RAD,LN/DEG_TO_RAD );
 
   if (!(pj_stere = pj_init_plus(center_config)) )
-   exit(1);
+   goto fail;
 
     if (!(pj_latlong = pj_init_plus("+proj=longlat" )) )
-   exit(1);
+   goto fail;
 
   if (!(pj_merc = pj_init_plus(port_config)) )
-   exit(1);
+   goto fail;
 
 
   for (jn=0;jn<size_from;jn++)
@@ -290,23 +297,52 @@ for (port=0;port<MaxPortTables;port++)
        my_table[(long)jn*2*size_from+in*2+1]=y;
 
   }
-  pj_free(pj_merc);
-  pj_free(pj_latlong);
-  pj_free(pj_stere);
+  pj_free(pj_merc);     pj_merc=NULL;
+  pj_free(pj_latlong);  pj_latlong=NULL;
+  pj_free(pj_stere);    pj_stere=NULL;
 
 
   size=pack_table(my_table,my_packtable,size_from);
   if (size>MaxPacked) {
-    printf("Can't pack the table (size>MaxPackTable)!\n");
-    exit(1);
+    fprintf(logfile?logfile:stderr,
+            "cannot pack the table (size>MaxPackTable)\n");
+    goto fail;
   }
   table_size[port]=size;
-  table[port]=malloc(size);
+  if ((table[port]=malloc(size))==NULL) goto fail;
   memcpy(table[port],my_packtable,size);
 
   free(my_table);
   free(my_packtable);
   return table[port];
+
+/* Every exit() this function used to make is a NULL return now.  libimage.so
+ * is a guest in someone else's process - a WSGI worker that has to answer the
+ * next request - so a radar whose table will not build is one radar missing
+ * from the mosaic, not a reason to take the host down.  read_files() skips it.
+ *
+ * The slot claimed above has to be given back.  B/L/Res/MapSize are written
+ * before the table is built and table[port] has already been freed, so
+ * leaving them as they are would make the next call for this radar match the
+ * cache test at the top of the function and hand back freed memory.  Clearing
+ * MapSize is what breaks the match: no real table is 0 cells wide.
+ */
+fail:
+  fprintf(logfile?logfile:stderr,
+          "no coordinate table for the radar at %.3fE %.3fN - skipping it\n",
+          LN/DEG_TO_RAD,BN/DEG_TO_RAD);
+
+  if (pj_merc!=NULL)    pj_free(pj_merc);
+  if (pj_latlong!=NULL) pj_free(pj_latlong);
+  if (pj_stere!=NULL)   pj_free(pj_stere);
+
+  B[port]=0; L[port]=0; Res[port]=0; MapSize[port]=0;
+  table_size[port]=0;
+  table[port]=NULL;
+
+  if (my_table!=NULL)     free(my_table);
+  if (my_packtable!=NULL) free(my_packtable);
+  return NULL;
 
 }
  void koord(unsigned char *tb,unsigned char *tbl_ptr,unsigned int size_from,int port) {

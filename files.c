@@ -530,7 +530,12 @@ flags=0;
               if (grid[j]==maps[i].nodata_alt) grid[j]=maps[i].nodata;
         }
 
+        /* NULL when the radar's coordinate table will not build - a bad PROJ
+         * setup or a table that will not pack.  It used to exit(1) inside
+         * get_ptr(); leaving the radar out of this product is the whole cost
+         * of it now, and the rest of the mosaic is still answered. */
         ptr=get_ptr(L0[port],B0[port],maps[i].mapres,mapsize,MSIZE_int);
+        if (ptr==NULL) continue;
         koord((unsigned char *)buffer[slot].strptr+8,ptr,mapsize,port);
         switch (maps[i].merge) {
         case MERGE_MAX:
