@@ -297,6 +297,10 @@ class Frame(object):
         """How many levels of `family` this frame carries."""
         return self._archive.levels(family)
 
+    def legend(self, family):
+        """The family's legend rows - see Archive.legend."""
+        return self._archive.legend(family)
+
     def array(self):
         """grid() as a numpy (size, size) uint8 array.  Needs numpy."""
         import numpy
@@ -419,6 +423,10 @@ class Archive(object):
         lib.cross_section_colors.restype = ctypes.c_int
         lib.cross_section_nodata.argtypes = [ctypes.c_int]
         lib.cross_section_nodata.restype = ctypes.c_int
+        lib.cross_section_legend.argtypes = [ctypes.c_int, ctypes.c_int,
+                                             ctypes.c_char_p,
+                                             ctypes.c_char_p, ctypes.c_int]
+        lib.cross_section_legend.restype = ctypes.c_int
         lib.cross_section_levels.argtypes = [ctypes.c_int]
         lib.cross_section_levels.restype = ctypes.c_int
         lib.cross_section_families.argtypes = [ctypes.POINTER(ctypes.c_int),
@@ -564,6 +572,24 @@ class Archive(object):
         """How many levels of a family the loaded frame carries."""
         fam = FAMILIES[family] if isinstance(family, str) else int(family)
         return self._lib.cross_section_levels(fam)
+
+    def legend(self, family):
+        """The family's legend, strongest first: [(label, (r, g, b)), ...].
+
+        The rows the viewer draws down the side of its window.  A web page
+        that builds its own colour scale out of a value range will not match
+        the map, however carefully it is chosen; this is the map's own, so it
+        does.  Labels are cp866 in the palette files and text here.
+        """
+        fam = FAMILIES[family] if isinstance(family, str) else int(family)
+        rows, row = [], 0
+        while True:
+            rgb = ctypes.create_string_buffer(3)
+            label = ctypes.create_string_buffer(64)
+            if not self._lib.cross_section_legend(fam, row, rgb, label, 64):
+                return rows
+            rows.append((_cp866(label.value), tuple(rgb.raw)))
+            row += 1
 
     def _geotiff(self, path):
         path = os.path.abspath(path)          # the engine runs in workdir
