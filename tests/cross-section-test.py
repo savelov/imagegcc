@@ -14,6 +14,10 @@ raster that comes out of the bindings.  On tests/data:
     value outside it means the arithmetic happened in the byte;
   * the colours are the palette's, byte for byte, so a section and a map of
     one frame cannot disagree about what a colour means;
+  * cross_section(values=True) describes that same raster: a cell is empty in
+    both views or in neither, and every value agrees with the byte it was
+    quantised to.  The web API serves the numbers and the picture from one
+    cut, so the day they drift apart is the day it lies about one of them;
   * png() writes a PNG that reads back as the pixels it was given.
 
     python3 tests/cross-section-test.py [-v]
@@ -177,6 +181,48 @@ def main():
                                     % (name, ["%d=%+.1f" % (b, value_of(family, b))
                                               for b in out[:6]], lo, hi))
 
+            # the float export describes the same grid as the bytes.  Cells
+            # are empty in both or in neither - that is the crisp one, and it
+            # is what caught the section reading no-data off the loaded
+            # product instead of off the family being cut.  The values
+            # themselves must agree with what the bytes decode to, within the
+            # quantisation of one byte, or the two scales have drifted apart.
+            frame.load(product + "1")
+            numbers = frame.cross_section(*LINE, family=name, values=True)
+            if numbers is None or numbers.values is None:
+                problems.append("%s: no values from cross_section(values=True)"
+                                % name)
+            else:
+                if len(numbers.values) != numbers.width * numbers.height:
+                    problems.append("%s: %d values for a %dx%d raster"
+                                    % (name, len(numbers.values),
+                                       numbers.width, numbers.height))
+                if len(numbers.floor_km) != numbers.width:
+                    problems.append("%s: %d beam floors for %d columns"
+                                    % (name, len(numbers.floor_km),
+                                       numbers.width))
+                blank = [i for i, v in enumerate(numbers.values)
+                         if (v <= numbers.NO_VALUE) != (numbers.data[i] == empty)]
+                if blank:
+                    problems.append("%s: %d cells empty as a byte but not as a "
+                                    "value, or the other way round (%s)"
+                                    % (name, len(blank), blank[:6]))
+                step = {"zdr": 0.1, "dbz": 1 / 3.0}[name]
+                drift = [(i, numbers.values[i], value_of(family, numbers.data[i]))
+                         for i, v in enumerate(numbers.values)
+                         if v > numbers.NO_VALUE and numbers.data[i] != empty
+                         and abs(v - value_of(family, numbers.data[i])) > step]
+                if verbose:
+                    filled = sum(1 for v in numbers.values
+                                 if v > numbers.NO_VALUE)
+                    print("     %d/%d cells carry a value, in %s"
+                          % (filled, len(numbers.values), numbers.units))
+                if drift:
+                    problems.append("%s: %d values disagree with the byte they "
+                                    "were quantised to, e.g. %s"
+                                    % (name, len(drift),
+                                       ["#%d %.2f vs %.2f" % d for d in drift[:4]]))
+
             # and it writes a PNG that reads back
             frame.load(product + "1")
             png = os.path.join(HERE, "cross-%s.png" % name)
@@ -213,7 +259,8 @@ def main():
             print("   " + p)
         return 1
     print("PASS: sections come out, stay inside the range of the levels they "
-          "cut, wear the map's colours and survive the PNG")
+          "cut, wear the map's colours, agree with their own values and "
+          "survive the PNG")
     return 0
 
 

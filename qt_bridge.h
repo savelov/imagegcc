@@ -115,7 +115,26 @@ int  cross_section_byte(int family,float value);
 int  cross_section_raster(int x1,int y1,int x2,int y2,int family,int smooth,
                           unsigned char *out,int max,int *width,int *height,
                           float *length_km,float *top_km,float *base_km);
+
+/* CS_NO_VALUE marks a cell the beam never reached, in the float export
+ * below.  It is well outside every family's range and inside what CS_HAS()
+ * already treats as absent, so one number tests for empty whatever the
+ * quantity is. */
+#define CS_NO_VALUE (-9999.0f)
+
+/* the same section as physical values rather than palette bytes, for a caller
+ * that wants the numbers - a web API serving dBZ, dB or m/s.  Sized and
+ * oriented exactly like cross_section_raster(): out=NULL reports the size,
+ * row 0 is the TOP.  `floor` takes the width lowest-beam altitudes when it is
+ * not NULL, so a caller can shade what is below the lowest scan rather than
+ * present the gap as an absence of echo. */
+int  cross_section_values(int x1,int y1,int x2,int y2,int family,int smooth,
+                          float *out,int max,int *width,int *height,
+                          float *length_km,float *top_km,float *base_km,
+                          float *floor,int floor_max);
 int  cross_section_colors(int family,unsigned char *rgb);
+/* the empty byte in that raster - the family's, not the loaded product's */
+int  cross_section_nodata(int family);
 int  cross_section_legend(int family,int row,unsigned char *rgb,
                           char *label,int size);
 const char *cross_section_units(int family);

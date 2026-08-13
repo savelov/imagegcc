@@ -451,6 +451,20 @@ int cross_section_legend(int family,int row,unsigned char *rgb,
    return 1;
 }
 
+/* The byte cross_section_raster() writes where the beam never reached.
+ *
+ * It is the family's own no-data and not the loaded product's, which is the
+ * same number often enough to be misleading: a caller that cuts a zdr section
+ * out of a frame loaded as dbz1 and reads the no-data off the product makes
+ * the wrong index transparent, and the empty half of the picture comes out
+ * painted.  -1 when the family has no palette. */
+int cross_section_nodata(int family)
+{
+   struct palette *pal=family_palette(family);
+
+   return pal!=NULL ? pal->nodata : -1;
+}
+
 const char *cross_section_units(int family)
 {
    struct palette *pal=family_palette(family);
@@ -514,6 +528,63 @@ int cross_section_raster(int x1,int y1,int x2,int y2,int family,int smooth,
          dst[ix]= byte<0 ? (unsigned char)empty : (unsigned char)byte;
       }
    }
+   cross_section_release(&cs);
+   return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* the section as numbers                                              */
+/* ------------------------------------------------------------------ */
+
+/* The values the raster above was about to quantise, handed out instead.
+ *
+ * It exists so that a caller outside this process - the WSGI cross section
+ * API in radar-wms - can report dBZ, dB and m/s rather than palette indices.
+ * Inverting the bytes on the far side would work for reflectivity and
+ * velocity, whose scales are a multiply and an add, and would quietly go
+ * wrong for differential reflectivity, whose scale wraps: zdr_value() in
+ * palette.c is the only description of it there is.  cs_value() above is
+ * already that one description, so the numbers leave from here.
+ *
+ * The geometry is the raster's, deliberately: same width and height, same
+ * two-call sizing, and row 0 at the TOP.  A caller that asks for both gets
+ * two views of one grid and cannot get them out of step.
+ */
+int cross_section_values(int x1,int y1,int x2,int y2,int family,int smooth,
+                         float *out,int max,int *width,int *height,
+                         float *length_km,float *top_km,float *base_km,
+                         float *floor,int floor_max)
+{
+   struct cross_section cs;
+   int ix,iz;
+
+   if (!cross_section_compute(x1,y1,x2,y2,family,smooth,&cs)) return 0;
+
+   if (width)     *width     = cs.width;
+   if (height)    *height    = cs.height;
+   if (length_km) *length_km = cs.length_km;
+   if (top_km)    *top_km    = cs.top_km;
+   if (base_km)   *base_km   = cs.base_km;
+
+   if (out==NULL || max<cs.width*cs.height) {
+      cross_section_release(&cs);
+      return out==NULL;                         /* sizing call, or too small */
+   }
+
+   for (iz=0;iz<cs.height;iz++) {
+      const float *src=cs.value+(long)iz*cs.width;
+      float *dst=out+(long)(cs.height-1-iz)*cs.width;
+
+      for (ix=0;ix<cs.width;ix++)
+         dst[ix]= CS_HAS(src[ix]) ? src[ix] : CS_NO_VALUE;
+   }
+
+   /* the lowest altitude the beam reaches at each step along the line.  Below
+    * it the section is empty because nothing looked, which is not the same as
+    * empty because nothing was there. */
+   if (floor!=NULL && floor_max>=cs.width)
+      for (ix=0;ix<cs.width;ix++) floor[ix]=cs.floor_km[ix];
+
    cross_section_release(&cs);
    return 1;
 }

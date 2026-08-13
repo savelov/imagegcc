@@ -28,11 +28,20 @@ and cannot be linked into a shared object, so the library is built from the
 sources that do not draw (see make.sh).  Everything here is therefore data -
 there is no window, no palette allocation and no legend.
 
-Two caveats worth knowing.  The C engine keeps its state in globals, so an
-Archive is not reentrant - use one at a time, and do not thread it.  And it
-reports a broken config by calling exit(), which ends the host process rather
-than raising: Archive checks what it can beforehand, but a config/image.cfg
-that is missing or malformed will still take the script down with it.
+The caveat worth knowing: the C engine keeps its state in globals, so an
+Archive is not reentrant - one at a time, in one thread, and the working
+directory is the process's own.  A long-lived server has to give the engine a
+process to itself; radar-wms/image_engine.py is what that looks like under
+mod_wsgi.
+
+Serving requests from it used to have a second caveat, that the engine
+answered a problem by calling exit() and took the host process with it.  On
+the per-request path that is gone: get_ptr() returns NULL for a radar whose
+coordinate table will not build and read_files() leaves that radar out of the
+mosaic.  What remains is start-up only - a missing or malformed
+config/image.cfg, and a first palette that will not load (palette.c keeps a
+working one after that).  Open the Archive once, at start-up, where an exit is
+a failure to start rather than a request that killed the worker.
 """
 
 import ctypes
@@ -68,6 +77,14 @@ FAMILIES = {"dbz": FAM_DBZ, "zdr": FAM_ZDR, "vel": FAM_VEL}
 
 class ImageError(Exception):
     pass
+
+
+def _cp866(raw):
+    """A label from the engine.  They are cp866 - the encoding the archive,
+    the config files and the .wrk headers have always been in."""
+    if raw is None:
+        return ""
+    return raw.decode("cp866", errors="replace").strip()
 
 
 class _MyFile(ctypes.Structure):
@@ -129,8 +146,13 @@ class CrossSection(object):
     Cells the beam never reached carry `nodata`, which png() makes transparent.
     """
 
+    #: what `values` carries where the beam never reached.  CS_NO_VALUE in
+    #: qt_bridge.h - the two have to agree.
+    NO_VALUE = -9999.0
+
     def __init__(self, width, height, data, palette, nodata,
-                 length_km, top_km, base_km, family):
+                 length_km, top_km, base_km, family,
+                 values=None, floor_km=None, units="", title=""):
         self.width = width
         self.height = height
         self.data = data
@@ -140,6 +162,15 @@ class CrossSection(object):
         self.top_km = top_km            # what height spans
         self.base_km = base_km          # the lowest level; below it is guesswork
         self.family = family
+        #: physical values, width*height of them, row 0 at the TOP like
+        #: `data`, or None when the section was not asked for them.  Empty
+        #: cells carry NO_VALUE.  dBZ, dB or m/s - `units` says which.
+        self.values = values
+        #: width altitudes: the lowest the beam reaches at each step along the
+        #: line.  Under it the section is empty because nothing looked.
+        self.floor_km = floor_km
+        self.units = units              # cp866, from the palette
+        self.title = title              # cp866, the product's own name
 
     def png(self, path):
         """Write it as a palette PNG, no-data transparent.  Standard library
@@ -172,6 +203,25 @@ class CrossSection(object):
         import numpy
         return numpy.frombuffer(self.data, numpy.uint8).reshape(self.height,
                                                                 self.width)
+
+    def value_rows(self, empty=None):
+        """`values` as a list of rows, top row first, for serialising.
+
+        Cells the beam never reached come out as `empty` - None by default,
+        which is what JSON has and what a plotting library reads as a gap.
+        Raises when the section was cut without values=True; there is nothing
+        sensible to return, and quietly handing back the palette bytes would
+        put indices where a caller expects dBZ.
+        """
+        if self.values is None:
+            raise ImageError("this section carries no values - cut it with "
+                             "cross_section(..., values=True)")
+        rows = []
+        for row in range(self.height):
+            start = row * self.width
+            rows.append([empty if v <= self.NO_VALUE else round(v, 2)
+                         for v in self.values[start:start + self.width]])
+        return rows
 
     def __repr__(self):
         return ("<CrossSection %dx%d cells, %.0f km along, %.1f..%.1f km up>"
@@ -221,7 +271,8 @@ class Frame(object):
         """
         return self._archive._grid()
 
-    def cross_section(self, x1, y1, x2, y2, family="zdr", smooth=True):
+    def cross_section(self, x1, y1, x2, y2, family="zdr", smooth=True,
+                      values=False):
         """Cut a vertical section between two cells of the product grid.
 
         The endpoints are grid cells, the same ones grid() is indexed by;
@@ -230,8 +281,21 @@ class Frame(object):
         needs at least two levels of it, and returns None when the frame does
         not carry that many.  Any product of the frame has to be load()ed
         first; which one does not matter, the levels are found from the family.
+
+        `values` cuts the line a second time for the physical numbers, in the
+        units the engine reports; without it the section is palette bytes
+        only, which is all a picture needs.
         """
-        return self._archive._cross_section(x1, y1, x2, y2, family, smooth)
+        return self._archive._cross_section(x1, y1, x2, y2, family, smooth,
+                                            values)
+
+    def families(self):
+        """The families this frame can be cut through - see Archive.families."""
+        return self._archive.families()
+
+    def levels(self, family):
+        """How many levels of `family` this frame carries."""
+        return self._archive.levels(family)
 
     def array(self):
         """grid() as a numpy (size, size) uint8 array.  Needs numpy."""
@@ -342,8 +406,28 @@ class Archive(object):
             ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
             ctypes.POINTER(ctypes.c_float)]
         lib.cross_section_raster.restype = ctypes.c_int
+        lib.cross_section_values.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_float),
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_float), ctypes.c_int]
+        lib.cross_section_values.restype = ctypes.c_int
         lib.cross_section_colors.argtypes = [ctypes.c_int, ctypes.c_char_p]
         lib.cross_section_colors.restype = ctypes.c_int
+        lib.cross_section_nodata.argtypes = [ctypes.c_int]
+        lib.cross_section_nodata.restype = ctypes.c_int
+        lib.cross_section_levels.argtypes = [ctypes.c_int]
+        lib.cross_section_levels.restype = ctypes.c_int
+        lib.cross_section_families.argtypes = [ctypes.POINTER(ctypes.c_int),
+                                               ctypes.c_int]
+        lib.cross_section_families.restype = ctypes.c_int
+        lib.cross_section_units.argtypes = [ctypes.c_int]
+        lib.cross_section_units.restype = ctypes.c_char_p
+        lib.cross_section_title.argtypes = [ctypes.c_int]
+        lib.cross_section_title.restype = ctypes.c_char_p
         lib.map_grid.argtypes = [ctypes.c_int, ctypes.c_char_p]
         lib.map_grid.restype = ctypes.c_int
         lib.save_geotiff.argtypes = [ctypes.c_char_p]
@@ -412,7 +496,7 @@ class Archive(object):
                              % (side, size))
         return buf.raw
 
-    def _cross_section(self, x1, y1, x2, y2, family, smooth):
+    def _cross_section(self, x1, y1, x2, y2, family, smooth, values):
         try:
             fam = FAMILIES[family] if isinstance(family, str) else int(family)
         except KeyError:
@@ -440,9 +524,46 @@ class Archive(object):
         rgb = ctypes.create_string_buffer(256 * 3)
         if not self._lib.cross_section_colors(fam, rgb):
             raise ImageError("no palette for family %r" % family)
-        nodata = self._current.info["nodata"]
+
+        # The values come from a second cut of the same line rather than from
+        # the bytes above: the engine quantises on the way out, and the whole
+        # point of asking for them is to get what it quantised.  Same
+        # arguments, so the two rasters are the same grid.
+        vals = floor = None
+        if values:
+            vbuf = (ctypes.c_float * cells)()
+            fbuf = (ctypes.c_float * w.value)()
+            if not self._lib.cross_section_values(*(args + [vbuf, cells,
+                    ctypes.byref(w), ctypes.byref(h), ctypes.byref(length),
+                    ctypes.byref(top), ctypes.byref(base), fbuf, w.value])):
+                return None
+            vals, floor = list(vbuf), list(fbuf)
+
+        # the family's empty byte, not the loaded product's: they differ, and
+        # reading it off the product paints the empty half of the picture
+        nodata = self._lib.cross_section_nodata(fam)
         return CrossSection(w.value, h.value, buf.raw, rgb.raw, nodata,
-                            length.value, top.value, base.value, fam)
+                            length.value, top.value, base.value, fam,
+                            vals, floor,
+                            _cp866(self._lib.cross_section_units(fam)),
+                            _cp866(self._lib.cross_section_title(fam)))
+
+    def families(self):
+        """The families this frame can be cut through, most useful first.
+
+        A section needs two levels to interpolate between, so a frame that
+        carries one differential reflectivity level offers no "zdr".  Names,
+        the ones cross_section() takes.
+        """
+        buf = (ctypes.c_int * len(FAMILIES))()
+        n = self._lib.cross_section_families(buf, len(FAMILIES))
+        byvalue = {v: k for k, v in FAMILIES.items()}
+        return [byvalue[buf[i]] for i in range(n) if buf[i] in byvalue]
+
+    def levels(self, family):
+        """How many levels of a family the loaded frame carries."""
+        fam = FAMILIES[family] if isinstance(family, str) else int(family)
+        return self._lib.cross_section_levels(fam)
 
     def _geotiff(self, path):
         path = os.path.abspath(path)          # the engine runs in workdir
