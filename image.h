@@ -38,6 +38,16 @@ typedef unsigned __int128 port_mask;
 #define PORT_BIT(p)  ((port_mask)1 << (p))
 #define PORT_ALL     (~(port_mask)0)
 
+/* Which products read_files() should bother with.  MaxNoMaps is 64, so one
+ * word covers them, and the default is all of them - the viewer wants every
+ * product because the user can switch to any of them without another read.
+ * A caller after one thing does not: a vertical section needs the levels of
+ * one family and nothing else, and unzipping and mosaicking the other forty
+ * costs ten times what the family costs.  See want_maps in files.c. */
+typedef unsigned long long map_mask;
+#define MAP_BIT(m)   ((map_mask)1 << (m))
+#define MAP_ALL      (~(map_mask)0)
+
 #define MAX_Y 16
 #define MAX_X 69
 #define T_CHARS 8
@@ -274,6 +284,7 @@ extern void ViewString(int x,int y,int size_x,int size_y,char *line[]);
 extern void ViewForecast(int number);
 
 extern port_mask show_maps;
+extern map_mask  want_maps;   /* which products read_files() loads */
 
 
 extern unsigned int MSIZE_int;

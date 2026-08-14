@@ -88,6 +88,13 @@ int masx[MaxPorts], masy[MaxPorts];
 struct map_info maps[MaxNoMaps];
 int no_maps;
 
+/* Which products read_files() loads.  Every one of them, which is what
+ * the viewer needs - the user can switch product without another read of
+ * the archive.  A caller that wants less says so before calling: a
+ * vertical section needs the levels of one family, and loading all
+ * forty-four instead of eleven costs about three times as much. */
+map_mask want_maps = MAP_ALL;
+
 static char name_of[MaxNoMaps][16];
 static char descr_of[MaxNoMaps][16];
 
@@ -401,6 +408,11 @@ flags=0;
   for (i=0; i<no_maps; i++) {
     map_slot[i]=-1;
     if (flag && i!=current_map) continue;
+    /* not wanted: leave map_slot[i] at -1 and it is skipped all the
+     * way down, so its member is never unzipped and never mosaicked.
+     * The clearing pass above has already set mapres to 0, so what a
+     * later reader sees is an absent product and not a stale one. */
+    if (!(want_maps & MAP_BIT(i))) continue;
     if (isdigit((unsigned char)maps[i].filename[0]) && maps[i].filename[1]=='_')
        strcpy(filename[i],maps[i].filename);  /* the sums carry their own */
     else

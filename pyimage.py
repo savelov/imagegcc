@@ -74,6 +74,9 @@ for _i, _h in enumerate((1, 3, 6, 12, 24)):
 FAM_DBZ, FAM_ZDR, FAM_VEL = 0, 3, 4
 FAMILIES = {"dbz": FAM_DBZ, "zdr": FAM_ZDR, "vel": FAM_VEL}
 
+#: MAP_ALL from image.h - every product, which is what want_maps starts as.
+MAP_ALL = (1 << 64) - 1
+
 
 class ImageError(Exception):
     pass
@@ -240,9 +243,16 @@ class Frame(object):
         self.product = None
         self._info = None
 
-    def load(self, product):
-        """Read every radar for this frame and mosaic one product."""
-        self._archive._load(self, product)
+    def load(self, product, only=None):
+        """Read every radar for this frame and mosaic one product.
+
+        `only` is a family name - "dbz", "zdr", "vel" - and narrows the read
+        to that family's levels plus the product asked for.  A vertical
+        section needs no more than that, and the default (everything) costs
+        about three times as much.  Leave it alone for a GeoTIFF or a grid,
+        where the other products are wanted afterwards.
+        """
+        self._archive._load(self, product, only)
         return self
 
     @property
@@ -322,6 +332,10 @@ class Archive(object):
     """
 
     _open = None
+
+    #: the want_maps bits the last _load() actually read, so a caller can tell
+    #: whether what it needs is already in the composite
+    loaded_mask = 0
 
     def __init__(self, paths="paths", cfg="image.cfg", library=None,
                  workdir=None):
@@ -442,7 +456,36 @@ class Archive(object):
         lib.save_geotiff.restype = ctypes.c_int
         lib.save_info.argtypes = [ctypes.c_char_p]
         lib.save_info.restype = ctypes.c_int
+        lib.product_count.restype = ctypes.c_int
+        lib.product_family_of.argtypes = [ctypes.c_int]
+        lib.product_family_of.restype = ctypes.c_int
+        lib.product_level_of.argtypes = [ctypes.c_int]
+        lib.product_level_of.restype = ctypes.c_int
         return lib
+
+    # -- which products a read should bother with -------------------------
+
+    def family_mask(self, family):
+        """The want_maps bits for every product of one family.
+
+        read_files() unzips and mosaics whatever is selected, and doing all
+        forty-four products when a section needs the eleven of one family
+        costs about three times as much.  See want_maps in files.c.
+        """
+        fam = FAMILIES[family] if isinstance(family, str) else int(family)
+        mask = 0
+        for i in range(self._lib.product_count()):
+            if self._lib.product_family_of(i) == fam:
+                mask |= 1 << i
+        return mask
+
+    @property
+    def all_mask(self):
+        """Every product - what the viewer wants, and the default."""
+        return (1 << self._lib.product_count()) - 1
+
+    def _set_want(self, mask):
+        ctypes.c_ulonglong.in_dll(self._lib, "want_maps").value = mask
 
     def nearest(self, when):
         """The frame closest to `when`."""
@@ -455,16 +498,33 @@ class Archive(object):
 
     # -- the parts that touch the engine's globals ------------------------
 
-    def _load(self, frame, product):
+    def _load(self, frame, product, only=None):
         try:
             want = PRODUCTS[product]
         except KeyError:
             raise ImageError("unknown product %r - one of %s"
                              % (product, ", ".join(sorted(PRODUCTS))))
-        # flag 0 loads every product in the frame, which is what makes the
-        # radar vectors and the other levels available afterwards
-        self._lib.read_files(frame.index, 0)
+
+        # `only` narrows what gets unzipped and mosaicked to one family.  The
+        # default reads everything, which is what the viewer wants and what
+        # makes the other products available without another pass; a caller
+        # after a section through one family pays about a third as much by
+        # saying so.  The product being selected has to be in the set, or
+        # set_cur_map() would land on something that was never loaded.
+        mask = self.all_mask if only is None else \
+            self.family_mask(only) | (1 << self._lib.map_index(want))
+        self._set_want(mask)
+        try:
+            # flag 0 loads every product the mask allows, which is what makes
+            # the radar vectors and the other levels available afterwards
+            self._lib.read_files(frame.index, 0)
+        finally:
+            # back to MAP_ALL, the C default, rather than to a mask computed
+            # from no_maps: the global belongs to everything else in the
+            # process and should be found exactly as it started.
+            self._set_want(MAP_ALL)
         self._lib.set_cur_map(want)
+        self.loaded_mask = mask
 
         # set_cur_map() falls back to any product the frame does carry, which
         # is right on a screen and wrong here - the caller asked for one.
