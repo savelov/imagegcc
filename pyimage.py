@@ -262,7 +262,7 @@ class Frame(object):
         """
         return self._archive._entry(self.index).ports
 
-    def load(self, product, only=None, passports=False):
+    def load(self, product, only=None, passports=False, ports=None):
         """Read every radar for this frame and mosaic one product.
 
         `only` is a family name - "dbz", "zdr", "vel" - and narrows the read
@@ -278,7 +278,7 @@ class Frame(object):
         tenth of the price.  Those products come back with an empty grid;
         cut nothing out of them.
         """
-        self._archive._load(self, product, only, passports)
+        self._archive._load(self, product, only, passports, ports)
         return self
 
     @property
@@ -528,6 +528,29 @@ class Archive(object):
             return self.all_mask
         return bit | self.family_mask(only)
 
+    #: every port, PORT_ALL in image.h
+    PORT_ALL = (1 << 128) - 1
+
+    def _set_ports(self, mask):
+        """show_maps, which read_files() reads to decide which radars to open.
+
+        It is an unsigned __int128 and ctypes has no type for one, so it is
+        reached as the two 64 bit halves it is made of - the same trick
+        _MyFile uses for the port mask in an archive entry.
+        """
+        halves = (ctypes.c_uint64 * 2).in_dll(self._lib, "show_maps")
+        halves[0] = mask & ((1 << 64) - 1)
+        halves[1] = mask >> 64
+
+    @staticmethod
+    def port_mask(ports):
+        """A show_maps mask from port numbers, as header.wrk numbers them
+        (1 based, which is what Frame.ports reports)."""
+        mask = 0
+        for port in ports:
+            mask |= 1 << (int(port) - 1)
+        return mask
+
     def _set_want(self, mask, head=0):
         ctypes.c_ulonglong.in_dll(self._lib, "want_maps").value = mask
         ctypes.c_ulonglong.in_dll(self._lib, "head_maps").value = head
@@ -547,7 +570,7 @@ class Archive(object):
 
     # -- the parts that touch the engine's globals ------------------------
 
-    def _load(self, frame, product, only=None, passports=False):
+    def _load(self, frame, product, only=None, passports=False, ports=None):
         try:
             want = PRODUCTS[product]
         except KeyError:
@@ -570,6 +593,13 @@ class Archive(object):
         mask = self.mask_for(product, only, passports)
         head = (self.all_mask & ~mask) if passports else 0
         self._set_want(mask, head)
+
+        # `ports` leaves the radars that cannot reach the line unopened.  A
+        # radar is a zip file per frame, so this is the read as well as the
+        # mosaic - and it is also how a caller picks BETWEEN radars, which
+        # matters where two of them overlap and the merge would otherwise
+        # choose for you.
+        self._set_ports(self.PORT_ALL if ports is None else self.port_mask(ports))
         try:
             # flag 0 loads every product the masks allow, which is what makes
             # the radar vectors and the other levels available afterwards
@@ -579,6 +609,7 @@ class Archive(object):
             # no_maps: the globals belong to everything else in the process
             # and should be found exactly as they started.
             self._set_want(MAP_ALL, 0)
+            self._set_ports(self.PORT_ALL)
         self._lib.set_cur_map(want)
         self.loaded_mask = mask
 

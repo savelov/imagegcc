@@ -447,7 +447,12 @@ flags=0;
   cur=(int)current_prefix;
 
 	for (port=MaxPorts-1;port>=0;port--)
-    if ((Files[number].flag & PORT_BIT(port)) /*&& (show_maps & (1<<port))*/ ) {
+    /* show_maps skips the radar's archive file outright, not just its
+     * contribution to the mosaic: opening and unzipping it is most of
+     * what a port costs.  It was written as (1<<port) and commented
+     * out, which is the bug that would have made it useless anyway -
+     * ports run past 31, so that shifts an int off its end. */
+    if ((Files[number].flag & PORT_BIT(port)) && (show_maps & PORT_BIT(port))) {
                                                 /* if exist Map file */
      sprintf(archive_name,"%s/port%1d/%02d%02d%02d%02d.%02dm",
        mapdir,port+1,Files[number].FileYear,Files[number].FileMonth,
