@@ -285,6 +285,7 @@ extern void ViewForecast(int number);
 
 extern port_mask show_maps;
 extern map_mask  want_maps;   /* which products read_files() loads */
+extern map_mask  head_maps;   /* ... and which only for their passport */
 
 
 extern unsigned int MSIZE_int;

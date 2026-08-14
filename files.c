@@ -95,6 +95,19 @@ int no_maps;
  * forty-four instead of eleven costs about three times as much. */
 map_mask want_maps = MAP_ALL;
 
+/* Products to read the PASSPORT of and nothing else: the eight header
+ * bytes, which carry the altitude and the grid resolution, without
+ * unpacking the grid or mosaicking it.  Empty by default.
+ *
+ * It exists because "how many levels of this family does the frame
+ * carry" is answered by the passports alone, and answering it by
+ * building forty-four full mosaics costs about sixteen times what
+ * reading the headers costs.  A product read this way reports its
+ * resolution and its level, and its grid stays empty - so a caller must
+ * not then read the map, and radar-wms/image_engine.py keys its cache
+ * on the masks so that it cannot. */
+map_mask head_maps = 0;
+
 static char name_of[MaxNoMaps][16];
 static char descr_of[MaxNoMaps][16];
 
@@ -372,6 +385,7 @@ char archive_name[100];
 char filename[MaxNoMaps][20];
 UzpFilesBuffer buffer[MaxNoMaps+1];
 int map_slot[MaxNoMaps];  /* map -> the buffer holding its file, -1 if unread */
+char slot_grid[MaxNoMaps+1];  /* slot -> its grid is wanted, not just its head */
 unsigned char *ptr;
 int mapsize;
 
@@ -412,7 +426,7 @@ flags=0;
      * way down, so its member is never unzipped and never mosaicked.
      * The clearing pass above has already set mapres to 0, so what a
      * later reader sees is an absent product and not a stale one. */
-    if (!(want_maps & MAP_BIT(i))) continue;
+    if (!((want_maps | head_maps) & MAP_BIT(i))) continue;
     if (isdigit((unsigned char)maps[i].filename[0]) && maps[i].filename[1]=='_')
        strcpy(filename[i],maps[i].filename);  /* the sums carry their own */
     else
@@ -508,10 +522,20 @@ flags=0;
 		cod=(int)header[102];
       HMRL[port]=(float)header[53]/10.;
 
+     /* Which slots hold a grid somebody is going to mosaic.  A slot read
+      * only for its passport is left packed: unpack_grid() is a run length
+      * decode over the whole grid, and the eight bytes wanted from it sit in
+      * front of the part that is encoded. */
+     memset(slot_grid,0,sizeof(slot_grid));
+     for (i=0;i<no_maps;i++)
+        if (map_slot[i]>=0 && (want_maps & MAP_BIT(i)))
+           slot_grid[map_slot[i]]=1;
+
      /* the pixel grids: check the size against the passport and unpack, one
       * pass per file rather than one per product reading it */
      for (i=1;i<nslots;i++) {
         if (buffer[i].strlength<=8) continue;
+        if (!slot_grid[i]) continue;
         mapsize=(unsigned char)buffer[i].strptr[2];
         if (mapsize<100) mapsize*=10;
         if (buffer[i].strlength!=(unsigned long)mapsize*mapsize+8) {
@@ -531,6 +555,9 @@ flags=0;
         if (mapsize<100) mapsize*=10;
         fk[i][port]=1;
         if (!(show_maps & PORT_BIT(port))) continue;
+        /* passport read: the header above is all that was wanted, and the
+         * grid behind it was never even unpacked */
+        if (!(want_maps & MAP_BIT(i))) continue;
 
         /* Fold the previous no-data byte onto the current one, so the merge,
          * the interpolation and the palette all have a single marker to test
@@ -571,7 +598,7 @@ flags=0;
 	}
 
 	for (i=0; i<no_maps; i++)
-	   if (maps[i].mapres!=0 && maps[i].bufdata)
+	   if (maps[i].mapres!=0 && maps[i].bufdata && (want_maps & MAP_BIT(i)))
 	      interpolation(maps[i].bufdata,MSIZE_int,maps[i].nodata,
 	                    maps[i].noecho,maps[i].family!=FAM_PHENOM,
 	                    maps[i].family==FAM_ZDR);

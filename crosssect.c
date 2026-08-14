@@ -65,7 +65,19 @@ struct cs_level {
 /* Every level of one family the file on screen carries, lowest first.  Level 0
  * is excluded on purpose: for reflectivity that is the column maximum, which
  * belongs to no altitude. */
-static int collect_levels(int family,struct cs_level *level,int max)
+/* `need_grid` is the difference between two questions that look like one.
+ *
+ *   1: which levels could be cut right now - which needs their grids, and is
+ *      what cross_section_compute() is about to read.
+ *   2: which levels the frame CARRIES - which is answered by the passports
+ *      alone, and is what a caller reporting the contents of a frame wants.
+ *
+ * They came apart when read_files() learned to read a passport without
+ * mosaicking the grid behind it (head_maps in files.c).  bufdata is allocated
+ * the first time a product is actually mosaicked, so a level read only for its
+ * passport has none - present, and not cuttable. */
+static int collect_levels_(int family,struct cs_level *level,int max,
+                           int need_grid)
 {
    int i,j,n=0;
    float km;
@@ -73,7 +85,8 @@ static int collect_levels(int family,struct cs_level *level,int max)
    for (i=0;i<no_maps && n<max;i++) {
       if ((int)maps[i].family!=family) continue;
       if (maps[i].level==0) continue;
-      if (maps[i].mapres==0 || maps[i].bufdata==NULL) continue;
+      if (maps[i].mapres==0) continue;
+      if (need_grid && maps[i].bufdata==NULL) continue;
       if (maps[i].bufhead==NULL) continue;
       km=maps[i].bufhead[0]/10.0f;              /* the passport, not level */
       if (km<=0) continue;
@@ -101,11 +114,26 @@ static int collect_levels(int family,struct cs_level *level,int max)
    return n;
 }
 
+static int collect_levels(int family,struct cs_level *level,int max)
+{
+   return collect_levels_(family,level,max,1);
+}
+
 int cross_section_levels(int family)
 {
    struct cs_level level[CS_MAX_LEVELS];
 
    return collect_levels(family,level,CS_MAX_LEVELS);
+}
+
+/* How many levels of a family the frame carries, grids loaded or not.  For a
+ * caller reporting what is in a frame rather than cutting through it - see
+ * need_grid above. */
+int cross_section_present(int family)
+{
+   struct cs_level level[CS_MAX_LEVELS];
+
+   return collect_levels_(family,level,CS_MAX_LEVELS,0);
 }
 
 /* The families worth cutting through: two levels at least, or there is

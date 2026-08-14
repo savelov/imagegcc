@@ -243,7 +243,7 @@ class Frame(object):
         self.product = None
         self._info = None
 
-    def load(self, product, only=None):
+    def load(self, product, only=None, passports=False):
         """Read every radar for this frame and mosaic one product.
 
         `only` is a family name - "dbz", "zdr", "vel" - and narrows the read
@@ -251,8 +251,15 @@ class Frame(object):
         section needs no more than that, and the default (everything) costs
         about three times as much.  Leave it alone for a GeoTIFF or a grid,
         where the other products are wanted afterwards.
+
+        `passports` reads the header of every product that is not being
+        mosaicked - eight bytes carrying the level altitude and the grid
+        resolution.  That is all levels() and families() need, so a caller
+        asking only what the frame contains gets the answer for about a
+        tenth of the price.  Those products come back with an empty grid;
+        cut nothing out of them.
         """
-        self._archive._load(self, product, only)
+        self._archive._load(self, product, only, passports)
         return self
 
     @property
@@ -303,9 +310,9 @@ class Frame(object):
         """The families this frame can be cut through - see Archive.families."""
         return self._archive.families()
 
-    def levels(self, family):
-        """How many levels of `family` this frame carries."""
-        return self._archive.levels(family)
+    def levels(self, family, present=False):
+        """How many levels of `family` - see Archive.levels."""
+        return self._archive.levels(family, present)
 
     def legend(self, family):
         """The family's legend rows - see Archive.legend."""
@@ -443,6 +450,8 @@ class Archive(object):
         lib.cross_section_legend.restype = ctypes.c_int
         lib.cross_section_levels.argtypes = [ctypes.c_int]
         lib.cross_section_levels.restype = ctypes.c_int
+        lib.cross_section_present.argtypes = [ctypes.c_int]
+        lib.cross_section_present.restype = ctypes.c_int
         lib.cross_section_families.argtypes = [ctypes.POINTER(ctypes.c_int),
                                                ctypes.c_int]
         lib.cross_section_families.restype = ctypes.c_int
@@ -484,8 +493,23 @@ class Archive(object):
         """Every product - what the viewer wants, and the default."""
         return (1 << self._lib.product_count()) - 1
 
-    def _set_want(self, mask):
+    def mask_for(self, product, only=None, passports=False):
+        """The products a load(product, only, passports) would MOSAIC.
+
+        The caller needs this to know whether what is already in the composite
+        covers what it is about to ask for - the mask of mosaicked products is
+        the cache key, and a passport read deliberately is not part of it.
+        """
+        bit = 1 << self._lib.map_index(PRODUCTS[product])
+        if passports:
+            return bit if only is None else bit | self.family_mask(only)
+        if only is None:
+            return self.all_mask
+        return bit | self.family_mask(only)
+
+    def _set_want(self, mask, head=0):
         ctypes.c_ulonglong.in_dll(self._lib, "want_maps").value = mask
+        ctypes.c_ulonglong.in_dll(self._lib, "head_maps").value = head
 
     def nearest(self, when):
         """The frame closest to `when`."""
@@ -498,7 +522,7 @@ class Archive(object):
 
     # -- the parts that touch the engine's globals ------------------------
 
-    def _load(self, frame, product, only=None):
+    def _load(self, frame, product, only=None, passports=False):
         try:
             want = PRODUCTS[product]
         except KeyError:
@@ -511,18 +535,25 @@ class Archive(object):
         # after a section through one family pays about a third as much by
         # saying so.  The product being selected has to be in the set, or
         # set_cur_map() would land on something that was never loaded.
-        mask = self.all_mask if only is None else \
-            self.family_mask(only) | (1 << self._lib.map_index(want))
-        self._set_want(mask)
+        #
+        # `passports` then reads the eight header bytes of everything NOT
+        # mosaicked, which is what makes the level counts of the other
+        # families reportable without paying for their mosaics - ten times
+        # cheaper than mosaicking them.  Their grids stay empty, so
+        # loaded_mask below records the mosaicked products only and a caller
+        # comparing against it cannot mistake a passport for data.
+        mask = self.mask_for(product, only, passports)
+        head = (self.all_mask & ~mask) if passports else 0
+        self._set_want(mask, head)
         try:
-            # flag 0 loads every product the mask allows, which is what makes
+            # flag 0 loads every product the masks allow, which is what makes
             # the radar vectors and the other levels available afterwards
             self._lib.read_files(frame.index, 0)
         finally:
-            # back to MAP_ALL, the C default, rather than to a mask computed
-            # from no_maps: the global belongs to everything else in the
-            # process and should be found exactly as it started.
-            self._set_want(MAP_ALL)
+            # back to the C defaults rather than to masks computed from
+            # no_maps: the globals belong to everything else in the process
+            # and should be found exactly as they started.
+            self._set_want(MAP_ALL, 0)
         self._lib.set_cur_map(want)
         self.loaded_mask = mask
 
@@ -628,10 +659,17 @@ class Archive(object):
         byvalue = {v: k for k, v in FAMILIES.items()}
         return [byvalue[buf[i]] for i in range(n) if buf[i] in byvalue]
 
-    def levels(self, family):
-        """How many levels of a family the loaded frame carries."""
+    def levels(self, family, present=False):
+        """How many levels of a family can be cut right now.
+
+        `present` asks the other question: how many the frame CARRIES, whether
+        or not their grids were mosaicked.  After a passports=True load those
+        differ - the levels are all there and none of them is cuttable - and a
+        caller reporting the contents of a frame wants the second.
+        """
         fam = FAMILIES[family] if isinstance(family, str) else int(family)
-        return self._lib.cross_section_levels(fam)
+        return (self._lib.cross_section_present(fam) if present
+                else self._lib.cross_section_levels(fam))
 
     def legend(self, family):
         """The family's legend, strongest first: [(label, (r, g, b)), ...].

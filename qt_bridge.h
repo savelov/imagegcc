@@ -105,6 +105,8 @@ void cross_section_release(struct cross_section *cs);
  * first.  Returns how many were written. */
 int  cross_section_families(int *families,int max);
 int  cross_section_levels(int family);
+/* levels the frame carries, whether or not their grids are loaded */
+int  cross_section_present(int family);
 
 /* colouring, so the front end need not know how a product is encoded.
  * `rgb` is 256*3 bytes; the legend is one row per call, strongest first, and
