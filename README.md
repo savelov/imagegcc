@@ -251,17 +251,51 @@ interpolated sample could land on "no data" and punch a hole in an echo.
 GRX 2.4.9 patches (2026 port to modern Linux)
 ================================================================================
 
-The program links GRX 2.4.9, unpacked next to this directory as ../grx249.
-Three files in that tree carry local patches.  Unpacking a fresh GRX tarball
-resets them, and the library then has to be rebuilt FROM CLEAN, because the
-affected types and tables are baked into every object file.  Each patched
-file has a .orig-backup next to it.
+The program links GRX 2.4.9, which does not build on a current toolchain
+untouched.  The six patches in grx-patches/ are what make it, and they are
+the source of truth - not the working tree on any particular machine.
 
-Build order:
+--------------------------------------------------------------------------------
+Building GRX, from nothing
+--------------------------------------------------------------------------------
 
-    cd ../grx249/contrib/grx249/src && make -f makefile.x11 clean
-    cd ..                          && make -f makefile.x11 libs
-    cd ../../../imagegcc           && ./make.sh
+    curl -fLO http://grx.gnu.de/download/grx249.tar.gz
+    mkdir grx-build && tar xzf grx249.tar.gz -C grx-build --strip-components=1
+
+    for p in grx-patches/*.patch; do patch -p1 -d grx-build < "$p"; done
+
+    make -C grx-build -f makefile.x11 libs        # X11 driver, for unix
+    GRX=grx-build ./make.sh
+
+`patch -p1 -d <tree>` wants the directory that holds makedefs.grx.  There are
+two layouts in circulation and they differ on where that is: the tarball above
+puts it at the root once --strip-components=1 has eaten the leading directory,
+while the DJGPP-style grx249s.zip puts it under contrib/grx249.  Whatever -d
+you patch with is what GRX= has to point at afterwards.  make.sh defaults to
+../grx249/contrib/grx249, which is the zip layout.
+
+    ONLY EVER PATCH A FRESHLY UNPACKED TREE.
+
+That is not advice about wasted effort, it is about silent damage.  Patch 03
+changes one line of vd_mem.c, and the four lines of context around it are
+character for character identical to another struct twenty lines above -
+gr8ext, the 8bpp mode, whose colour component positions are legitimately
+{ 0, 0, 0 }.  Once gr24ext has been patched, the intended site no longer
+matches, patch finds the other one, reports a cheerful "Hunk #1 succeeded at
+90 (offset -19 lines)" and corrupts the palette mode instead.  -N does not
+protect you: this is not a reversed application, it is a different one that
+looks perfectly valid.  When in doubt, delete the tree and unpack it again.
+
+Rebuilding after patching has to be FROM CLEAN, because the affected types
+and tables are baked into every object file:
+
+    make -C grx-build -f makefile.x11 clean
+    make -C grx-build -f makefile.x11 libs
+
+The five workflows under .github/workflows/ do all of this on every push, and
+are the other place to read the procedure - linux.yml is the shortest of them.
+They fetch the tarball by checksum, so they also record which upstream tarball
+the patches are cut against.
 
 --------------------------------------------------------------------------------
 1. makedefs.grx - build configuration                    needed by every build
@@ -324,6 +358,54 @@ for its 24bpp mode, so GrAllocColor() shifts all three components to bit 0.
 imageqt and gen-bitmap are affected: both call GrSetDriver("memory") - gen-bitmap
 does so to escape the sixteen colour default described above.  imagegcc uses the
 X11 driver and is fine against a stock vd_mem.c.
+
+--------------------------------------------------------------------------------
+4. src/include/memfill.h - sttzero clears the whole struct       needed on win64
+--------------------------------------------------------------------------------
+
+    -#define sttzero(p)              memzero((p),sizeof(*(p)))
+    +#define sttzero(p)              memset((p),0,sizeof(*(p)))
+
+memzero() scales the byte count for a wider unit than the fill actually
+writes, so on some builds it clears only part of the object.
+
+    Symptom: on Win64 it cleared 52 bytes of a 104 byte GrContext, leaving
+    gc_xoffset and gc_yoffset as heap garbage that was then added to every
+    draw coordinate.  Linux hides it completely - fresh heap pages are zero
+    there, so the half that never gets cleared is already zero.
+
+That is why an unpatched tree passes tests/sttzero.c on Linux and fails it on
+Windows.  A Linux-only build survives without this patch; do not read that as
+not needing it.
+
+--------------------------------------------------------------------------------
+5. src/include/access24.h - endianness test                     needed on mingw
+--------------------------------------------------------------------------------
+
+    -#if BYTE_ORDER==LITTLE_ENDIAN
+    +#if !(defined(BYTE_ORDER) && defined(BIG_ENDIAN) && BYTE_ORDER==BIG_ENDIAN)
+
+An undefined BYTE_ORDER evaluates to 0 in #if, so a platform that defines
+LITTLE_ENDIAN but not BYTE_ORDER - mingw - silently took the big endian
+branch and read the colour bytes off by one.  Testing for known big endian
+instead means an unknown platform gets the little endian variant, which is
+the one that is right nearly everywhere.
+
+--------------------------------------------------------------------------------
+6. five files - macOS is a unix                                 needed on darwin
+--------------------------------------------------------------------------------
+
+    include/grx20.h, src/mouse/input.h, src/vdrivers/vd_xwin.c,
+    src/utilprog/bin2c.c, src/bgi/bccgrx00.h
+
+darwin defines neither `unix` nor `__unix__`, so GRX fell through to its
+"#error unknown platform" and, with GRX_VERSION never set, every later `far`
+went undeclared behind it.  The patch adds __APPLE__ && __MACH__ everywhere
+that list is tested, gives darwin a timer, and renames a static in vd_xwin.c
+that collides with a libc symbol there.
+
+It touches nothing on Linux or Windows, so it is applied unconditionally
+rather than being kept for macOS builds only.
 
 --------------------------------------------------------------------------------
 Checking a build
@@ -440,7 +522,9 @@ the right library and system libraries from `uname -s`:
     make -C <grx-tree> -f makefile.w32 libs      # produces lib/win32/libgrx20.a
     GRX=<grx-tree> ./make.sh
 
-The same three patches in grx-patches/ apply.  Patch 2 (libgrx.h) is not
+All of grx-patches/ applies here too, and patches 4 and 5 matter more on this
+platform than anywhere else - see their sections above; both are Windows bugs
+that Linux hides.  Patch 2 (libgrx.h) is not
 strictly required here - Windows x64 is LLP64, so `long` is 32 bit and GRX's
 `#else` branch happens to give the right GR_int32 - but note that GR_PtrInt
 stays `int` there while pointers are 64 bit.  That is only used for alignment
@@ -487,8 +571,8 @@ What has actually been tested
 
 Cross compiled from Linux with x86_64-w64-mingw32-gcc 13:
 
-  * GRX 2.4.9 builds for Windows from the upstream tarball with the three
-    patches applied - lib/win32/libgrx20.a, no errors
+  * GRX 2.4.9 builds for Windows from the upstream tarball with grx-patches/
+    applied - lib/win32/libgrx20.a, no errors
   * every .c file of this program compiles for Windows, with no implicit
     declarations and no missing headers
   * unsigned __int128, which the port bitmask needs, compiles and links
