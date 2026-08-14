@@ -233,15 +233,34 @@ class CrossSection(object):
 
 
 class Frame(object):
-    """One observation time.  `load()` builds the mosaic for a product."""
+    """One observation time.  `load()` builds the mosaic for a product.
 
-    def __init__(self, archive, index, stamp, ports):
+    __slots__ and the lazy `ports` below are not tidiness: an Archive holds one
+    of these per frame, and a production archive has a hundred and eighty
+    thousand of them.  A plain object with a __dict__ and a port list cost
+    about 750 bytes each - 130 MB of the 240 the frame list took - and neither
+    is wanted until somebody asks for a particular frame.
+    """
+
+    __slots__ = ("_archive", "index", "timestamp", "product", "_info")
+
+    def __init__(self, archive, index, stamp):
         self._archive = archive
         self.index = index
         self.timestamp = stamp
-        self.ports = ports
         self.product = None
         self._info = None
+
+    @property
+    def ports(self):
+        """The radars this frame carries, from the archive directory entry.
+
+        Built when asked rather than at open: it is a walk over 128 mask bits
+        and a list to hold the answer, and at the size of a real archive doing
+        that for every frame costs more time and more memory than everything
+        else in Archive() put together.
+        """
+        return self._archive._entry(self.index).ports
 
     def load(self, product, only=None, passports=False):
         """Read every radar for this frame and mosaic one product.
@@ -389,17 +408,19 @@ class Archive(object):
             count = ctypes.c_int.in_dll(self._lib, "FilesRead").value
             if count <= 0:
                 raise ImageError("no frames found - check the MAP line in %s" % paths)
-            files = (_MyFile * count).in_dll(self._lib, "Files")
+            # kept so that Frame.ports can read its entry when asked, instead
+            # of every frame building a port list nobody may ever look at
+            self._files = (_MyFile * count).in_dll(self._lib, "Files")
 
             self.frames = []
             for i in range(count):
-                f = files[i]
+                f = self._files[i]
                 try:
                     stamp = datetime.datetime(2000 + f.year, f.month, f.day,
                                               f.hour, f.minute)
                 except ValueError:      # a corrupt name in the archive directory
                     continue
-                self.frames.append(Frame(self, i, stamp, f.ports))
+                self.frames.append(Frame(self, i, stamp))
         except Exception:
             os.chdir(self._cwd)
             raise
@@ -510,6 +531,10 @@ class Archive(object):
     def _set_want(self, mask, head=0):
         ctypes.c_ulonglong.in_dll(self._lib, "want_maps").value = mask
         ctypes.c_ulonglong.in_dll(self._lib, "head_maps").value = head
+
+    def _entry(self, index):
+        """The archive directory entry for a frame, for Frame.ports."""
+        return self._files[index]
 
     def nearest(self, when):
         """The frame closest to `when`."""
