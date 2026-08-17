@@ -232,6 +232,8 @@ extern int       max_grafs;
 
 extern int move_file(char *from,char *to);
 extern void read_dir(void);
+/* "YYMMDD": read_dir() ignores older frames.  Empty = the whole archive. */
+extern char archive_since[8];
 
 struct MyFile {                             /* For an archive */
   unsigned char FileYear;

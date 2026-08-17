@@ -72,6 +72,20 @@ int result;
       if (!result) result = a->FileMinute-b->FileMinute;      return(result);
 }
 
+/* Ignore frames older than this, as the first six characters of a file
+ * name - "YYMMDD".  Empty means the whole archive, which is what the
+ * viewer wants and what this has always done.
+ *
+ * It exists for the web API, where the archive is years deep and a
+ * request only ever wants the last few days of it.  What it saves is the
+ * parse, the per port qsort and the merge below - all of which are in the
+ * number of files KEPT.  What it cannot save is the readdir() itself: a
+ * directory cannot be asked for part of itself, so every entry is still
+ * enumerated whether it is wanted or not.  On a slow filesystem that half
+ * is the half that hurts, and the only cure for it is fewer files in the
+ * directory. */
+char archive_since[8]="";
+
 void read_dir(void) {
 DIR *arc_dir;
 struct dirent *entry;
@@ -97,7 +111,9 @@ int i,j;
      }
      j=0;
      while (j<MaxFiles && (entry = readdir(arc_dir)) != NULL)
-       if (entry->d_name[0]!='.' && strlen(entry->d_name)==12) {
+       if (entry->d_name[0]!='.' && strlen(entry->d_name)==12 &&
+           (archive_since[0]=='\0' ||
+            memcmp(entry->d_name,archive_since,6)>=0)) {
 	      TempFiles[i][j].FileYear  =(entry->d_name[0]-'0')*10+entry->d_name[1]-'0';
 	      TempFiles[i][j].FileMonth =(entry->d_name[2]-'0')*10+entry->d_name[3]-'0';
 	      TempFiles[i][j].FileDay   =(entry->d_name[4]-'0')*10+entry->d_name[5]-'0';

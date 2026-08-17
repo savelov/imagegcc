@@ -363,8 +363,12 @@ class Archive(object):
     #: whether what it needs is already in the composite
     loaded_mask = 0
 
+    #: False when a `since` window was asked for and abandoned because it
+    #: matched no frames - the archive has nothing that recent
+    windowed = True
+
     def __init__(self, paths="paths", cfg="image.cfg", library=None,
-                 workdir=None):
+                 workdir=None, since=None):
         """`paths` names the path file; CFG/GRF/MAP inside it are resolved
         relative to `workdir`, which defaults to the directory holding it.
 
@@ -402,7 +406,29 @@ class Archive(object):
             # archive; init_files() allocates the passports.  This is the order
             # main() uses, and none of it may be skipped.
             self._lib.read_cfg(paths.encode(), cfg.encode())
+
+            # `since` keeps read_dir() to the recent end of the archive.  It
+            # saves the parse, the per port sort and the merge - about half of
+            # read_dir on a years deep archive - and not the readdir() of
+            # every entry, which no cutoff can avoid.  See archive_since in
+            # archive.c.
+            stamp = (ctypes.c_char * 8).in_dll(self._lib, "archive_since")
+            stamp.value = (since.strftime("%y%m%d").encode()
+                           if since is not None else b"")
             self._lib.read_dir()
+
+            # A window measured from the clock says nothing about what is on
+            # disk.  Let the pipeline stall for longer than the window and the
+            # cutoff matches no file at all - and an archive that reads as
+            # empty is a worse failure than a slow one, because it takes the
+            # whole service down rather than making it stale.  So: if the
+            # window found nothing, there was nothing recent to find, and the
+            # right answer is the archive as it stands.
+            if stamp.value and ctypes.c_int.in_dll(self._lib,
+                                                   "FilesRead").value <= 0:
+                self.windowed = False
+                stamp.value = b""
+                self._lib.read_dir()
             self._lib.init_files()
 
             count = ctypes.c_int.in_dll(self._lib, "FilesRead").value
