@@ -66,6 +66,18 @@ FILE *pat;
 int flags=0;
 int masx[MaxPorts], masy[MaxPorts];
 
+/* This radar's header.wrk was read for the frame in hand.
+ *
+ * The test used to be "has a name", which is not the same question.  A
+ * BUFR in the DMRL long-name layout carries no latin site name, so
+ * without an override in DEBUFR.CFg the name arrives empty - and the
+ * radar then vanished from the radar list even though its data was in
+ * the mosaic.  For the web API that was worse than cosmetic: the list is
+ * what decides which radars a cross section opens, so a nameless radar
+ * was excluded from its own section and the line came back "no radar
+ * within 250 km" over ground the radar covers. */
+unsigned char port_seen[MaxPorts];
+
 /* Every product bufr2wrk.py writes.  The table is built rather than spelled
  * out: the reflectivity, differential reflectivity and velocity levels differ
  * only in their number, and there are 35 of them between the three.
@@ -408,6 +420,7 @@ flags=0;
   for (port=0;port<MaxPorts;port++) {
     SPEED[port]=-1;
     memset(ST[port],0,50);
+    port_seen[port]=0;
     HMRL[port]=0;
     R[port]=0;
     masx[port]=0; masy[port]=0;
@@ -504,6 +517,7 @@ flags=0;
      fp=1;
      memset(ST[port],0,50);
      memcpy(ST[port],header+5,25);
+     port_seen[port]=1;          /* read, whether or not it is named */
 
     L0[port]=((float)header[47]+(float)header[48]/60+(float)header[49]/60/60)*RAD;
     B0[port]=((float)header[50]+(float)header[51]/60+(float)header[52]/60/60)*RAD;

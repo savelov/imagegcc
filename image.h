@@ -164,6 +164,9 @@ extern char current_prefix;
 extern unsigned int MSIZE;
 extern float MPIX;
 extern int masx[MaxPorts],masy[MaxPorts];
+/* this radar's header was read for the current frame - see files.c.  Not
+ * the same as "has a name": a nameless radar still carries data. */
+extern unsigned char port_seen[MaxPorts];
 extern unsigned char _HUGE *mapbuffer;
 extern float L0[MaxPorts],B0[MaxPorts];
 extern void init_maps(void);

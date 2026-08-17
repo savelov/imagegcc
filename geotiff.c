@@ -289,11 +289,19 @@ int save_info(const char *path)
                " +x_0=0 +y_0=0 +datum=WGS84 +units=m\",\n",BU*GR,LU*GR);
    fprintf(out,"  \"radars\": [\n");
    for (port=0;port<MaxPorts;port++) {
-      if (ST[port][0]==0) continue;            /* nothing loaded for this one */
+      if (!port_seen[port]) continue;          /* nothing loaded for this one */
       if (!first) fprintf(out,",\n");
       first=0;
       fprintf(out,"    {\"port\": %d, \"name\": ",port+1);
-      json_string(out,ST[port]);
+      /* A radar with no name is still a radar.  Give it one rather than
+       * an empty string, so that whatever lists it has something to
+       * print and whoever reads the list can tell which port it was. */
+      if (ST[port][0]==0) {
+         char fallback[16];
+         sprintf(fallback,"port %d",port+1);
+         json_string(out,(unsigned char *)fallback);
+      } else
+         json_string(out,ST[port]);
       fprintf(out,", \"lon\": %.4f, \"lat\": %.4f, "
                   "\"speed_kmh\": %.1f, \"azimuth_deg\": %d}",
               L0[port]*GR,B0[port]*GR,
