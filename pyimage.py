@@ -77,6 +77,9 @@ FAMILIES = {"dbz": FAM_DBZ, "zdr": FAM_ZDR, "vel": FAM_VEL}
 #: MAP_ALL from image.h - every product, which is what want_maps starts as.
 MAP_ALL = (1 << 64) - 1
 
+#: array bounds from image.h, for reaching the tables that are indexed by them
+MaxPorts, MaxNoMaps = 99, 64
+
 
 class ImageError(Exception):
     pass
@@ -534,6 +537,29 @@ class Archive(object):
             if self._lib.product_family_of(i) == fam:
                 mask |= 1 << i
         return mask
+
+    def family_ports(self):
+        """{family: set of ports that carried a level of it}, for the frame.
+
+        fk[product][port] is set by read_files() as each port's products are
+        taken in - before the want_maps test, so a passport read fills it too.
+        That makes it the answer to a question the level counts cannot reach:
+        WHICH radars carry a family, rather than how many levels the frame has
+        between all of them.  A section is cut from a few radars, so the two
+        differ, and the difference is a ZDR button that offers a section the
+        radars along the line cannot produce.
+        """
+        fk = (ctypes.c_int * MaxPorts * MaxNoMaps).in_dll(self._lib, "fk")
+        byvalue = {v: k for k, v in FAMILIES.items()}
+        out = {}
+        for i in range(self._lib.product_count()):
+            fam = byvalue.get(self._lib.product_family_of(i))
+            if fam is None or self._lib.product_level_of(i) == 0:
+                continue
+            for port in range(MaxPorts):
+                if fk[i][port]:
+                    out.setdefault(fam, set()).add(port + 1)
+        return out
 
     @property
     def all_mask(self):
